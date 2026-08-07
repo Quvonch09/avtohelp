@@ -1,0 +1,8 @@
+{
+  "name": "Avtohelp Admin Dashboard",
+  "description": "Avtohelp yo'l yordami va avtomobillar xizmati boshqaruv paneli",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

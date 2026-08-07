@@ -1,0 +1,359 @@
+<!DOCTYPE html>
+<html lang="uz">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Master Help — Loyiha Simulyatori (Test Platformasi)</title>
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    body {
+      background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%);
+    }
+  </style>
+</head>
+<body class="text-slate-100 min-h-screen p-8">
+  <div class="max-w-6xl mx-auto space-y-8">
+    
+    <!-- Header -->
+    <header class="flex justify-between items-center bg-slate-900/80 backdrop-blur border border-slate-800 p-6 rounded-2xl">
+      <div>
+        <h1 className="text-3xl font-bold bg-gradient-to-r from-cyan-400 to-blue-500 bg-clip-text text-transparent text-2xl font-bold">
+          Master Help Simulyatori
+        </h1>
+        <p class="text-xs text-slate-400 mt-1">Telefonlarsiz loyihani to'liq sinab ko'rish platformasi</p>
+      </div>
+      <div id="connection-status" class="bg-cyan-500/10 text-cyan-400 border border-cyan-500/20 px-4 py-1.5 rounded-full text-xs font-semibold">
+        Ulanmoqda...
+      </div>
+    </header>
+
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-8">
+      
+      <!-- Left: Simulation Controls -->
+      <div class="space-y-6">
+        
+        <!-- Step 1: Create Test Accounts -->
+        <section class="bg-slate-900/60 border border-slate-800 p-6 rounded-2xl space-y-4">
+          <h2 class="text-lg font-bold text-white flex items-center gap-2">👤 1-Bosqich: Test Akkauntlarini Yaratish</h2>
+          <p class="text-xs text-slate-400">Tizimni sinash uchun ma'lumotlar bazasida vaqtinchalik Mijoz va Usta yaratamiz.</p>
+          <div class="flex gap-4">
+            <button onclick="createTestUser()" class="flex-1 bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-4 rounded-xl text-sm transition-colors">
+              Mijoz Yaratish (User)
+            </button>
+            <button onclick="createTestMaster()" class="flex-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold py-2.5 px-4 rounded-xl text-sm transition-colors">
+              Usta Yaratish (Master)
+            </button>
+          </div>
+          <div id="accounts-log" class="text-xs text-slate-400 bg-slate-950 p-3 rounded-lg border border-slate-800/50 hidden"></div>
+        </section>
+
+        <!-- Step 2: Set Master Online & Simulate Location -->
+        <section class="bg-slate-900/60 border border-slate-800 p-6 rounded-2xl space-y-4">
+          <h2 class="text-lg font-bold text-white flex items-center gap-2">📡 2-Bosqich: Usta Holati va GPS Simulyatsiyasi</h2>
+          <p class="text-xs text-slate-400">Usta online bo'ladi va uning xaritada harakatlanishi (GPS o'zgarishi) simulyatsiya qilinadi.</p>
+          <div class="space-y-3">
+            <div class="flex gap-4">
+              <button onclick="toggleMasterOnline(true)" class="flex-1 bg-cyan-500 hover:bg-cyan-600 text-slate-950 font-bold py-2 px-4 rounded-lg text-xs transition-colors">
+                Online Bo'lish
+              </button>
+              <button onclick="toggleMasterOnline(false)" class="flex-1 bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/20 font-bold py-2 px-4 rounded-lg text-xs transition-colors">
+                Offline Bo'lish
+              </button>
+            </div>
+            <button onclick="simulateGPSMovement()" class="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 py-2.5 px-4 rounded-xl text-xs font-semibold transition-colors">
+              🚗 Usta Harakatini Simulyatsiya Qilish (GPS o'zgarishi)
+            </button>
+          </div>
+        </section>
+
+        <!-- Step 3: Create & Manage Order -->
+        <section class="bg-slate-900/60 border border-slate-800 p-6 rounded-2xl space-y-4">
+          <h2 class="text-lg font-bold text-white flex items-center gap-2">📦 3-Bosqich: Buyurtma Oqimi (Order Lifecycle)</h2>
+          <p class="text-xs text-slate-400">Foydalanuvchi buyurtma beradi, usta qabul qiladi, yo'lga chiqadi va yakunlaydi.</p>
+          <div class="grid grid-cols-2 gap-3">
+            <button onclick="createOrder()" class="bg-blue-600 hover:bg-blue-700 text-white font-bold py-2.5 px-3 rounded-lg text-xs transition-colors">
+              1. Chaqirish (Create Order)
+            </button>
+            <button onclick="updateOrderStatus('ACCEPTED')" class="bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-2.5 px-3 rounded-lg text-xs transition-colors">
+              2. Qabul Qilish (Accept)
+            </button>
+            <button onclick="updateOrderStatus('ON_WAY')" class="bg-cyan-600 hover:bg-cyan-700 text-white font-bold py-2.5 px-3 rounded-lg text-xs transition-colors">
+              3. Yo'lga chiqish (On Way)
+            </button>
+            <button onclick="updateOrderStatus('ARRIVED')" class="bg-purple-600 hover:bg-purple-700 text-white font-bold py-2.5 px-3 rounded-lg text-xs transition-colors">
+              4. Yetib kelish (Arrived)
+            </button>
+            <button onclick="updateOrderStatus('DONE')" class="col-span-2 bg-emerald-500 hover:bg-emerald-600 text-slate-950 font-bold py-3 px-3 rounded-xl text-sm transition-colors">
+              5. Yakunlash (Complete Order & Rate)
+            </button>
+          </div>
+        </section>
+
+      </div>
+
+      <!-- Right: Real-time Monitor Console -->
+      <div class="flex flex-col h-[650px] bg-slate-900/80 border border-slate-800 rounded-2xl p-6 overflow-hidden">
+        <h2 class="text-lg font-bold text-white mb-4 flex items-center gap-2">💻 Real-time Tizim Loglari Console</h2>
+        
+        <!-- Logs window -->
+        <div id="logs-container" class="flex-1 bg-slate-950 border border-slate-800 rounded-xl p-4 font-mono text-xs overflow-y-auto space-y-2 text-slate-300">
+          <div class="text-cyan-400">[Tizim] Simulyator boshlandi.</div>
+        </div>
+
+        <button onclick="clearLogs()" class="mt-4 bg-slate-800 hover:bg-slate-700 text-slate-400 py-2 rounded-lg text-xs transition-colors">
+          Loglarni Tozalash
+        </button>
+      </div>
+
+    </div>
+
+  </div>
+
+  <script>
+    // Supabase sozlamalari
+    const supabaseUrl = "https://mtwcfkyuvapnvgcxgmda.supabase.co";
+    const supabaseAnonKey = "sb_publishable_bFQK59UKRpkgM1Bc1Az-dA_FYhgkh6e";
+    const supabaseClient = supabase.createClient(supabaseUrl, supabaseAnonKey);
+
+    // Test IDs (lokal saqlanadi)
+    let testUserId = "00000000-0000-0000-0000-000000000001"; // UUID format
+    let testMasterId = "00000000-0000-0000-0000-000000000002";
+    let activeOrderId = null;
+    let gpsInterval = null;
+    let gpsLat = 41.311081;
+    let gpsLng = 69.240562;
+
+    // Ulanish holatini tekshirish
+    async function checkConnection() {
+      try {
+        const { data, error } = await supabaseClient.from('services').select('count');
+        if (error) throw error;
+        document.getElementById('connection-status').innerText = '🔥 Supabase-ga Ulangan';
+        log('[Tizim] Supabase ma\'lumotlar bazasiga ulanish muvaffaqiyatli o\'rnatildi.');
+      } catch (err) {
+        document.getElementById('connection-status').innerText = '❌ Ulanish Xatosi';
+        document.getElementById('connection-status').className = 'bg-red-500/10 text-red-400 border border-red-500/20 px-4 py-1.5 rounded-full text-xs font-semibold';
+        log('[Xato] Baza bilan ulanib bo\'lmadi: ' + err.message);
+      }
+    }
+
+    checkConnection();
+
+    // Logga yozish
+    function log(message, type = 'info') {
+      const container = document.getElementById('logs-container');
+      const div = document.createElement('div');
+      const time = new Date().toLocaleTimeString();
+      
+      let colorClass = 'text-slate-300';
+      if (type === 'success') colorClass = 'text-emerald-400 font-semibold';
+      if (type === 'error') colorClass = 'text-red-400 font-semibold';
+      if (type === 'info') colorClass = 'text-cyan-400';
+
+      div.innerHTML = `<span class="text-slate-500">[${time}]</span> <span class="${colorClass}">${message}</span>`;
+      container.appendChild(div);
+      container.scrollTop = container.scrollHeight;
+    }
+
+    function clearLogs() {
+      document.getElementById('logs-container').innerHTML = '';
+    }
+
+    // 1-qadam: Test User yaratish
+    async function createTestUser() {
+      log('Mijoz yaratish boshlandi...');
+      
+      // auth.users da test foydalanuvchi yo'qligini tekshirib yaratish ( profiles da to'g'ridan to'g'ri yozish )
+      try {
+        const { error } = await supabaseClient.from('profiles').upsert({
+          id: testUserId,
+          phone: '+998991112233',
+          role: 'USER',
+          full_name: 'Test Mijoz (Elnur)',
+          is_verified: true,
+          is_online: false
+        });
+
+        if (error) throw error;
+
+        // User mashinasini qo'shish
+        await supabaseClient.from('user_cars').upsert({
+          id: '00000000-0000-0000-0000-000000000003',
+          user_id: testUserId,
+          brand_id: 1, // Chevrolet
+          model_id: 1, // Cobalt
+          year: 2022,
+          plate: '01A777AA'
+        });
+
+        log('Test Mijoz muvaffaqiyatli yaratildi va Chevrolet Cobalt mashinasi qo\'shildi!', 'success');
+        showAccountsLog();
+      } catch (err) {
+        log('Mijoz yaratishda xatolik: ' + err.message, 'error');
+      }
+    }
+
+    // Test Master yaratish
+    async function createTestMaster() {
+      log('Usta yaratish boshlandi...');
+      try {
+        const { error } = await supabaseClient.from('profiles').upsert({
+          id: testMasterId,
+          phone: '+998994445566',
+          role: 'MASTER',
+          full_name: 'Test Usta (Davron)',
+          is_verified: true, // Avtomatik tasdiqlangan
+          is_online: false
+        });
+
+        if (error) throw error;
+
+        // master_profiles trigger orqali o'zi yaratiladi, biz update qilamiz
+        await supabaseClient.from('master_profiles').upsert({
+          id: testMasterId,
+          experience_years: 5,
+          about: 'Malakali avto-elektrik va motor ustasiman.'
+        });
+
+        // Xizmat ko'rsatadigan brendlari
+        await supabaseClient.from('master_cars').upsert([
+          { master_id: testMasterId, brand_id: 1 }, // Chevrolet
+          { master_id: testMasterId, brand_id: 2 }  // BYD
+        ]);
+
+        // Servislari
+        await supabaseClient.from('master_services').upsert([
+          { master_id: testMasterId, service_id: 1, price: 120000 }, // Evakuator
+          { master_id: testMasterId, service_id: 5, price: 90000 }   // Avto Elektrik
+        ]);
+
+        log('Test Usta muvaffaqiyatli yaratildi, unga xizmatlar va brendlar biriktirildi!', 'success');
+        showAccountsLog();
+      } catch (err) {
+        log('Usta yaratishda xatolik: ' + err.message, 'error');
+      }
+    }
+
+    function showAccountsLog() {
+      const el = document.getElementById('accounts-log');
+      el.classList.remove('hidden');
+      el.innerHTML = `<strong>Akkaunt ma'lumotlari:</strong><br>Mijoz ID: ${testUserId}<br>Usta ID: ${testMasterId}`;
+    }
+
+    // 2-qadam: Usta Online holati
+    async function toggleMasterOnline(online) {
+      log(`Usta holatini o'zgartirish: ${online ? 'ONLINE' : 'OFFLINE'}`);
+      try {
+        const { error } = await supabaseClient
+          .from('profiles')
+          .update({ is_online: online, location: `POINT(69.240562 41.311081)` })
+          .eq('id', testMasterId);
+
+        if (error) throw error;
+        log(`Usta muvaffaqiyatli ${online ? 'ONLINE bo\'ldi' : 'OFFLINE bo\'ldi'}.`, 'success');
+      } catch (err) {
+        log('Xatolik: ' + err.message, 'error');
+      }
+    }
+
+    // GPS Harakat simulyatsiyasi
+    function simulateGPSMovement() {
+      if (gpsInterval) {
+        clearInterval(gpsInterval);
+        gpsInterval = null;
+        log('GPS simulyatsiyasi to\'xtatildi.');
+        return;
+      }
+
+      log('GPS harakat simulyatsiyasi boshlandi. Usta harakatlanmoqda...');
+      gpsInterval = setInterval(async () => {
+        // Koordinatalarni bir oz o'zgartiramiz (haydovchi tomonga yaqinlashtiramiz)
+        gpsLat += (Math.random() - 0.5) * 0.0005;
+        gpsLng += (Math.random() - 0.5) * 0.0005;
+
+        try {
+          const pointWkt = `POINT(${gpsLng} ${gpsLat})`;
+          await supabaseClient
+            .from('profiles')
+            .update({ location: pointWkt, last_location_at: new Date().toISOString() })
+            .eq('id', testMasterId);
+          
+          log(`GPS yangilandi: Lat: ${gpsLat.toFixed(6)}, Lng: ${gpsLng.toFixed(6)}`);
+        } catch (err) {
+          log('GPS yangilashda xatolik: ' + err.message, 'error');
+        }
+      }, 3000);
+    }
+
+    // 3-qadam: Buyurtma yaratish
+    async function createOrder() {
+      log('Mijoz tomonidan usta chaqirilmoqda (yangi buyurtma)...');
+      try {
+        // Evakuator xizmatiga buyurtma
+        const { data, error } = await supabaseClient
+          .from('orders')
+          .insert({
+            user_id: testUserId,
+            master_id: testMasterId,
+            user_car_id: '00000000-0000-0000-0000-000000000003',
+            service_id: 1, // Evakuator
+            status: 'PENDING',
+            user_location: `POINT(69.240562 41.311081)`,
+            user_address: 'Toshkent shahar, Amir Temur xiyoboni',
+            price: 120000
+          })
+          .select()
+          .single();
+
+        if (error) throw error;
+        activeOrderId = data.id;
+        log(`Buyurtma yaratildi! Status: PENDING. ID: ${activeOrderId}`, 'success');
+      } catch (err) {
+        log('Buyurtma yaratishda xatolik: ' + err.message, 'error');
+      }
+    }
+
+    // Buyurtma holatini yangilash
+    async function updateOrderStatus(newStatus) {
+      if (!activeOrderId) {
+        log('Faol buyurtma topilmadi. Avval "Chaqirish" tugmasini bosing.', 'error');
+        return;
+      }
+
+      log(`Buyurtma holatini o'zgartirish: ${newStatus}`);
+      try {
+        const { error } = await supabaseClient
+          .from('orders')
+          .update({ status: newStatus })
+          .eq('id', activeOrderId);
+
+        if (error) throw error;
+        log(`Buyurtma holati muvaffaqiyatli '${newStatus}' ga o'zgartirildi!`, 'success');
+
+        if (newStatus === 'DONE') {
+          // Yakunlanganda rating va baho qo'shish
+          log('Buyurtma yakunlandi. Ustaga 5 yulduzli baho qo\'yilmoqda...');
+          await supabaseClient.from('ratings').insert({
+            order_id: activeOrderId,
+            from_user: testUserId,
+            to_master: testMasterId,
+            stars: 5,
+            comment: 'Juda tez keldi, rahmat!'
+          });
+          log('Ustaga baho muvaffaqiyatli qo\'yildi va ustaning o\'rtacha reytingi qayta hisoblandi!', 'success');
+          
+          if (gpsInterval) {
+            clearInterval(gpsInterval);
+            gpsInterval = null;
+            log('GPS simulyatsiyasi yakunlandi.');
+          }
+          activeOrderId = null;
+        }
+      } catch (err) {
+        log('Holatni o\'zgartirishda xatolik: ' + err.message, 'error');
+      }
+    }
+  </script>
+</body>
+</html>
