@@ -25,8 +25,16 @@ jobs:
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
-          flutter-version: '3.19.x'
           channel: 'stable'
+          cache: true
+
+      - name: Flutter version
+        run: flutter --version
+
+      - name: Generate Android platform files
+        run: |
+          cd mobile
+          flutter create --platforms android . --project-name master_help
 
       - name: Get Flutter dependencies
         run: |
@@ -36,10 +44,13 @@ jobs:
       - name: Build Android APK
         run: |
           cd mobile
-          flutter build apk --release
+          flutter build apk --release --no-pub
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Avtohelp-MasterHelp-Release-APK
           path: mobile/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: warn
