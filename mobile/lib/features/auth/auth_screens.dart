@@ -129,7 +129,7 @@ class _LoginScreenState extends State<LoginScreen> {
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                 ),
                 child: const Text(
-                  'Kodni yuborish',
+                  'Davom etish',
                   style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, fontFamily: 'Inter'),
                 ),
               ),
@@ -178,7 +178,8 @@ class _OtpScreenState extends State<OtpScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              '${widget.phone} raqamiga yuborilgan 4 xonali kodni kiriting.',
+              // ⚠️ SMS BYPASS: istalgan 4 raqam kiriting
+              'Tasdiqlash uchun ixtiyoriy 4 ta raqam kiriting.',
               style: const TextStyle(color: Colors.black54, fontSize: 15),
               textAlign: TextAlign.center,
             ),

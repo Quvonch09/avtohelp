@@ -1,5 +1,4 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
-import 'dart:convert';
 
 class SupabaseConfig {
   static const String supabaseUrl = 'https://mtwcfkyuvapnvgcxgmda.supabase.co';
@@ -16,39 +15,59 @@ class SupabaseService {
   // Foydalanuvchining joriy ID si
   String? get currentUserId => client.auth.currentUser?.id;
 
-  // Custom Edge Function: OTP SMS yuborish
+  // ⚠️ SMS OTP VAQTINCHA DISABLED (SMS provider ulanmagan)
+  // SMS provider ulanganidan keyin bu metodlarni asl holiga qaytaring.
+
+  // OTP SMS yuborish — hozircha bypass (hech narsa qilmaydi)
   Future<Map<String, dynamic>> sendOtp(String phone) async {
-    try {
-      final response = await client.functions.invoke(
-        'send-otp',
-        body: {'phone': phone},
-      );
-      return response.data as Map<String, dynamic>;
-    } catch (e) {
-      throw Exception('OTP kod jo\'natishda xatolik: $e');
-    }
+    // TODO: SMS provider ulanganidan keyin Edge Function 'send-otp' ni yoqing
+    // Hozircha shunchaki muvaffaqiyat qaytaradi
+    return {'success': true, 'message': 'bypass mode'};
   }
 
-  // Custom Edge Function: OTP kodni tasdiqlash va tizimga kirish
+  // OTP tasdiqlash — hozircha bypass (istalgan kod bilan kirish)
+  // Supabase email trick: telefon raqamni email formatiga o'girib anonymous login
   Future<Map<String, dynamic>> verifyOtp(String phone, String code) async {
+    // TODO: SMS provider ulanganidan keyin Edge Function 'verify-otp' ni yoqing
     try {
-      final response = await client.functions.invoke(
-        'verify-otp',
-        body: {'phone': phone, 'code': code},
-      );
-      
-      final data = response.data as Map<String, dynamic>;
-      
-      if (data.containsKey('session') && data['session'] != null) {
-        final sessionData = data['session'] as Map<String, dynamic>;
-        
-        // Supabase sessiyasini yuklash (Tokenlarni saqlab qolish uchun)
-        await client.auth.recoverSession(jsonEncode(sessionData));
+      // Telefon raqamni email ko'rinishiga o'giramiz: +998901234567 → 998901234567@avtohelp.uz
+      final cleanPhone = phone.replaceAll(RegExp(r'[^0-9]'), '');
+      final fakeEmail = '$cleanPhone@avtohelp.uz';
+      // OTP kodi parol sifatida ishlatiladi (bypass: istalgan 4-raqamli kod)
+      final fakePassword = 'avtohelp_$cleanPhone';
+
+      AuthResponse authResponse;
+      try {
+        // Avval login qilib ko'ramiz
+        authResponse = await client.auth.signInWithPassword(
+          email: fakeEmail,
+          password: fakePassword,
+        );
+      } catch (_) {
+        // Foydalanuvchi mavjud emas — yangi ro'yxatdan o'tkazamiz
+        authResponse = await client.auth.signUp(
+          email: fakeEmail,
+          password: fakePassword,
+        );
       }
-      
-      return data;
+
+      final user = authResponse.user;
+      if (user == null) throw Exception('Kirish amalga oshmadi');
+
+      // Profil mavjudligini tekshirish
+      final profile = await client
+          .from('profiles')
+          .select()
+          .eq('id', user.id)
+          .maybeSingle();
+
+      return {
+        'user': {'id': user.id, 'email': user.email},
+        'has_profile': profile != null,
+        'role': profile?['role'],
+      };
     } catch (e) {
-      throw Exception('OTP tasdiqlashda xatolik: $e');
+      throw Exception('Kirish xatosi: $e');
     }
   }
 
