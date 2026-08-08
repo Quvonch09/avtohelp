@@ -58,15 +58,20 @@ class SupabaseService {
 
       return {'user_id': user.id, 'profile': profile};
     } on AuthException catch (e) {
-      // Anonymous auth yoqilmagan bo'lsa — email usulga o'tamiz
-      if (e.message.contains('Anonymous') ||
-          e.statusCode == '422' ||
-          e.statusCode == '501') {
-        return await _loginWithFakeEmail(phone);
+      // Anonymous auth yoqilmagan bo'lsa → aniq xato ko'rsatamiz
+      if (e.message.toLowerCase().contains('anonymous') ||
+          e.message.toLowerCase().contains('disabled') ||
+          e.statusCode == '400' ||
+          e.statusCode == '422') {
+        throw Exception(
+          'Supabase sozlamalari:\n'
+          'Authentication → Sign In / Providers sahifasida\n'
+          '"Allow anonymous sign-ins" ni yoqing va Save bosing.',
+        );
       }
       throw Exception(e.message);
     } catch (e) {
-      throw Exception('Kirish xatosi: $e');
+      rethrow;
     }
   }
 
