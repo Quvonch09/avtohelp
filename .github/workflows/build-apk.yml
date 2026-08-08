@@ -1,4 +1,4 @@
-name: Build Mobile Android APK
+name: Build Mobile Apps (Android APK + iOS IPA)
 
 on:
   push:
@@ -8,7 +8,10 @@ on:
   workflow_dispatch:
 
 jobs:
-  build-apk:
+  # ─────────────────────────────────────────────
+  #  Android APK Build
+  # ─────────────────────────────────────────────
+  build-android:
     name: Build Android APK
     runs-on: ubuntu-latest
 
@@ -51,6 +54,55 @@ jobs:
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Avtohelp-MasterHelp-Release-APK
+          name: Avtohelp-Android-Release-APK
           path: mobile/build/app/outputs/flutter-apk/app-release.apk
+          if-no-files-found: warn
+
+  # ─────────────────────────────────────────────
+  #  iOS IPA Build
+  # ─────────────────────────────────────────────
+  build-ios:
+    name: Build iOS IPA
+    runs-on: macos-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: 'stable'
+          cache: true
+
+      - name: Flutter version
+        run: flutter --version
+
+      - name: Generate iOS platform files
+        run: |
+          cd mobile
+          flutter create --platforms ios . --project-name master_help
+
+      - name: Get Flutter dependencies
+        run: |
+          cd mobile
+          flutter pub get
+
+      - name: Install CocoaPods dependencies
+        run: |
+          cd mobile/ios
+          pod install --repo-update
+
+      - name: Build iOS (no code sign)
+        run: |
+          cd mobile
+          flutter build ipa --release --no-codesign --no-pub
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+
+      - name: Upload IPA Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Avtohelp-iOS-Release-IPA
+          path: mobile/build/ios/ipa/*.ipa
           if-no-files-found: warn
