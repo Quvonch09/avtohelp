@@ -17,45 +17,90 @@ class SupabaseService {
 
   // ─────────────────────────────────────────────────────────────────────────
   // ⚠️ SMS OTP BYPASS MODE (SMS provider ulanmagan)
-  // TODO: SMS provider ulanganidan keyin bu metodlarni o'zgartiring:
-  //   1. loginWithPhone → Edge Function 'send-otp' + 'verify-otp' bilan
-  //   2. Bu metodni ikkiga bo'ling: sendOtp() va verifyOtp()
+  // TODO: SMS provider ulanganida:
+  //   1. signInWithOtp(phone: phone) → OTP yuborish
+  //   2. verifyOTP(phone, token, OtpType.sms) → tasdiqlash
   // ─────────────────────────────────────────────────────────────────────────
   Future<Map<String, dynamic>> loginWithPhone(String phone) async {
-    // Telefon raqamni email ko'rinishiga o'giramiz (bypass)
+    try {
+      // ── Qadam 1: Mavjud sessiyani tekshirish ─────────────────────────────
+      final currentUser = client.auth.currentUser;
+      if (currentUser != null) {
+        final profile = await client
+            .from('profiles')
+            .select()
+            .eq('id', currentUser.id)
+            .maybeSingle();
+        // Sessiya va profil bor → to'g'ridan-to'g'ri kirish
+        if (profile != null) {
+          return {'user_id': currentUser.id, 'profile': profile};
+        }
+        // Sessiya bor, profil yo'q → ro'yxatdan o'tish oqimi
+        return {'user_id': currentUser.id, 'profile': null};
+      }
+
+      // ── Qadam 2: Anonymous auth (email/SMS kerak emas) ───────────────────
+      // Supabase dashboard'da yoqish:
+      //   Authentication → Sign In Methods → Anonymous → Enable
+      final response = await client.auth.signInAnonymously(
+        data: {'phone': phone}, // telefon raqamni metadata'ga saqlaymiz
+      );
+
+      final user = response.user;
+      if (user == null) throw Exception('Kirish amalga oshmadi');
+
+      // Profil mavjudligini tekshirish
+      final profile = await client
+          .from('profiles')
+          .select()
+          .eq('id', user.id)
+          .maybeSingle();
+
+      return {'user_id': user.id, 'profile': profile};
+    } on AuthException catch (e) {
+      // Anonymous auth yoqilmagan bo'lsa — email usulga o'tamiz
+      if (e.message.contains('Anonymous') ||
+          e.statusCode == '422' ||
+          e.statusCode == '501') {
+        return await _loginWithFakeEmail(phone);
+      }
+      throw Exception(e.message);
+    } catch (e) {
+      throw Exception('Kirish xatosi: $e');
+    }
+  }
+
+  // Email usul (anonymous auth yoqilmagan holat uchun fallback)
+  // ❗ Supabase → Authentication → Providers → Email → "Confirm email" ni o'chiring
+  Future<Map<String, dynamic>> _loginWithFakeEmail(String phone) async {
     final cleanPhone = phone.replaceAll(RegExp(r'[^0-9]'), '');
-    final fakeEmail = 'user_$cleanPhone@avtohelp.uz';
-    final fakePassword = 'avtohelp_bypass_$cleanPhone';
+    final fakeEmail = 'u${cleanPhone}x@avtohelp.uz';
+    final fakePassword = 'av2h3lp_$cleanPhone';
 
     AuthResponse authResponse;
     try {
-      // Mavjud foydalanuvchi — login
       authResponse = await client.auth.signInWithPassword(
         email: fakeEmail,
         password: fakePassword,
       );
     } catch (_) {
-      // Yangi foydalanuvchi — ro'yxatdan o'tkazish
       authResponse = await client.auth.signUp(
         email: fakeEmail,
         password: fakePassword,
+        emailRedirectTo: null,
       );
     }
 
     final user = authResponse.user;
     if (user == null) throw Exception('Kirish amalga oshmadi');
 
-    // Profil mavjudligini tekshirish
     final profile = await client
         .from('profiles')
         .select()
         .eq('id', user.id)
         .maybeSingle();
 
-    return {
-      'user_id': user.id,
-      'profile': profile, // null → yangi foydalanuvchi
-    };
+    return {'user_id': user.id, 'profile': profile};
   }
 
   // ─────────────────────────────────────────────────────────────────────────
