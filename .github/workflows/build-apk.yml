@@ -120,10 +120,32 @@ jobs:
           echo "IPA created at: $(pwd)/master_help.ipa"
           ls -lh *.ipa
 
+      - name: Build iOS Simulator App
+        run: |
+          cd mobile
+          flutter build ios --simulator --no-codesign --no-pub
+        env:
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+
+      - name: Package Simulator App ZIP
+        run: |
+          cd mobile/build/ios/iphonesimulator
+          APP_NAME=$(ls -d *.app | head -1)
+          zip -r ../../../master_help_simulator.zip "$APP_NAME"
+          echo "Simulator ZIP created"
+
       - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
           name: Avtohelp-iOS-Release-IPA
           path: mobile/build/ios/ipa/master_help.ipa
           if-no-files-found: warn
+
+      - name: Upload Simulator APP Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Avtohelp-iOS-Simulator-APP
+          path: mobile/master_help_simulator.zip
+          if-no-files-found: warn
+
 
