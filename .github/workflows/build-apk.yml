@@ -17,7 +17,7 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Java Development Kit (JDK)
         uses: actions/setup-java@v5
@@ -30,9 +30,6 @@ jobs:
         with:
           channel: 'stable'
           cache: true
-
-      - name: Flutter version
-        run: flutter --version
 
       - name: Generate Android platform files
         run: |
@@ -52,7 +49,7 @@ jobs:
           GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
 
       - name: Upload APK Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: Avtohelp-Android-Release-APK
           path: mobile/build/app/outputs/flutter-apk/app-release.apk
@@ -67,16 +64,13 @@ jobs:
 
     steps:
       - name: Checkout repository
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Set up Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: true
-
-      - name: Flutter version
-        run: flutter --version
 
       - name: Generate iOS platform files
         run: |
@@ -91,29 +85,45 @@ jobs:
       - name: Set iOS deployment target to 14.0
         run: |
           cd mobile/ios
-          # Update platform version in Podfile (google_maps_flutter requires >= 14.0)
           sed -i '' "s/# platform :ios, '[0-9.]*'/platform :ios, '14.0'/" Podfile
           sed -i '' "s/platform :ios, '[0-9.]*'/platform :ios, '14.0'/" Podfile
-          echo "--- Podfile platform line ---"
-          grep "platform" Podfile || echo "(no platform line found, adding)"
-          # If no platform line exists at all, prepend it
           grep -q "^platform" Podfile || sed -i '' "1s/^/platform :ios, '14.0'\n/" Podfile
+          echo "--- Podfile ---"
+          cat Podfile | grep platform
 
       - name: Install CocoaPods dependencies
         run: |
           cd mobile/ios
           pod install --repo-update
 
-      - name: Build iOS (no code sign)
+      - name: Build iOS archive (no code sign)
         run: |
           cd mobile
           flutter build ipa --release --no-codesign --no-pub
         env:
           GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
 
+      - name: Package IPA from xcarchive
+        run: |
+          cd mobile
+          # Find the .app inside xcarchive
+          ARCHIVE=$(find build/ios/archive -name "*.xcarchive" | head -1)
+          echo "Archive found: $ARCHIVE"
+          APP_PATH=$(find "$ARCHIVE/Products/Applications" -name "*.app" 2>/dev/null | head -1)
+          echo "App found: $APP_PATH"
+
+          mkdir -p build/ios/ipa/Payload
+          cp -r "$APP_PATH" build/ios/ipa/Payload/
+          cd build/ios/ipa
+          zip -r master_help.ipa Payload
+          rm -rf Payload
+          echo "IPA created at: $(pwd)/master_help.ipa"
+          ls -lh *.ipa
+
       - name: Upload IPA Artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v5
         with:
           name: Avtohelp-iOS-Release-IPA
-          path: mobile/build/ios/ipa/*.ipa
+          path: mobile/build/ios/ipa/master_help.ipa
           if-no-files-found: warn
+
