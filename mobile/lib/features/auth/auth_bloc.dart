@@ -1,85 +1,135 @@
+import 'dart:typed_data';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:master_help/core/supabase_client.dart';
-import 'package:supabase_flutter/supabase_flutter.dart';
 
-// --- Events ---
+// ═══════════════════════════════════════════════════════════════
+// EVENTS
+// ═══════════════════════════════════════════════════════════════
 abstract class AuthEvent {}
 
+/// Ilova ochilganda sessiyani tekshirish
 class CheckAuthStatus extends AuthEvent {}
 
-class SendOtpRequested extends AuthEvent {
+/// Telefon raqam kiritildi → login yoki ro'yxatdan o'tish
+class PhoneSubmitted extends AuthEvent {
   final String phone;
-  SendOtpRequested(this.phone);
+  PhoneSubmitted(this.phone);
 }
 
-class VerifyOtpRequested extends AuthEvent {
-  final String phone;
-  final String code;
-  VerifyOtpRequested({required this.phone, required this.code});
+/// Ism-familiya kiritildi
+class NameSubmitted extends AuthEvent {
+  final String name;
+  NameSubmitted(this.name);
 }
 
-class RegisterDetailsSubmitted extends AuthEvent {
-  final String fullName;
-  final String role; // 'USER' yoki 'MASTER'
-  final String? avatarUrl;
-  
-  // Master uchun maxsus
-  final int? experienceYears;
-  final String? about;
-  final List<int>? selectedBrands;
-  final List<Map<String, dynamic>>? selectedServices; // [{'service_id': 1, 'price': 50000}, ...]
-
-  RegisterDetailsSubmitted({
-    required this.fullName,
-    required this.role,
-    this.avatarUrl,
-    this.experienceYears,
-    this.about,
-    this.selectedBrands,
-    this.selectedServices,
-  });
+/// Rasm tanlandi → yuklansin
+class PhotoUploadRequested extends AuthEvent {
+  final Uint8List bytes;
+  final String extension;
+  PhotoUploadRequested({required this.bytes, required this.extension});
 }
 
+/// Rasm o'tkazib yuborildi
+class PhotoSkipped extends AuthEvent {}
+
+/// Foydalanuvchi roli tanlandi
+class UserRoleChosen extends AuthEvent {}
+
+/// Usta roli tanlandi → xizmatlar ekrani
+class MasterRoleChosen extends AuthEvent {}
+
+/// Usta xizmatlarini tasdiqladi → profil yaratish
+class ServicesConfirmed extends AuthEvent {
+  final List<int> serviceIds;
+  ServicesConfirmed(this.serviceIds);
+}
+
+/// Tizimdan chiqish
 class SignOutRequested extends AuthEvent {}
 
-// --- States ---
+// ═══════════════════════════════════════════════════════════════
+// STATES
+// ═══════════════════════════════════════════════════════════════
 abstract class AuthState {}
 
 class AuthInitial extends AuthState {}
 class AuthLoading extends AuthState {}
-class AuthOtpSent extends AuthState {
+
+/// Tizimga kirilmagan → LoginScreen
+class AuthUnauthenticated extends AuthState {}
+
+/// Qadam 1: Ism kiritish
+class AuthNameStep extends AuthState {
   final String phone;
-  AuthOtpSent(this.phone);
-}
-class AuthNeedsRegistration extends AuthState {
   final String userId;
-  final String phone;
-  AuthNeedsRegistration({required this.userId, required this.phone});
+  AuthNameStep({required this.phone, required this.userId});
 }
-class AuthPendingVerification extends AuthState {}
+
+/// Qadam 2: Rasm yuklash
+class AuthPhotoStep extends AuthState {
+  final String phone;
+  final String userId;
+  final String name;
+  AuthPhotoStep({required this.phone, required this.userId, required this.name});
+}
+
+/// Qadam 3: Rol tanlash
+class AuthRoleStep extends AuthState {
+  final String phone;
+  final String userId;
+  final String name;
+  final String? photoUrl;
+  AuthRoleStep({required this.phone, required this.userId, required this.name, this.photoUrl});
+}
+
+/// Qadam 4 (Usta): Xizmatlar tanlash
+class AuthServiceStep extends AuthState {
+  final String phone;
+  final String userId;
+  final String name;
+  final String? photoUrl;
+  final List<Map<String, dynamic>> services;
+  AuthServiceStep({
+    required this.phone,
+    required this.userId,
+    required this.name,
+    this.photoUrl,
+    required this.services,
+  });
+}
+
+/// Tizimga kirildi → HomeScreen
 class AuthAuthenticated extends AuthState {
   final String role;
   final Map<String, dynamic> profile;
   AuthAuthenticated({required this.role, required this.profile});
 }
-class AuthUnauthenticated extends AuthState {}
+
+/// Xatolik
 class AuthError extends AuthState {
   final String message;
   AuthError(this.message);
 }
 
-// --- BLoC ---
+// ═══════════════════════════════════════════════════════════════
+// BLOC
+// ═══════════════════════════════════════════════════════════════
 class AuthBloc extends Bloc<AuthEvent, AuthState> {
   final SupabaseService _db = SupabaseService();
 
   AuthBloc() : super(AuthInitial()) {
     on<CheckAuthStatus>(_onCheckAuthStatus);
-    on<SendOtpRequested>(_onSendOtpRequested);
-    on<VerifyOtpRequested>(_onVerifyOtpRequested);
-    on<RegisterDetailsSubmitted>(_onRegisterDetailsSubmitted);
+    on<PhoneSubmitted>(_onPhoneSubmitted);
+    on<NameSubmitted>(_onNameSubmitted);
+    on<PhotoUploadRequested>(_onPhotoUploadRequested);
+    on<PhotoSkipped>(_onPhotoSkipped);
+    on<UserRoleChosen>(_onUserRoleChosen);
+    on<MasterRoleChosen>(_onMasterRoleChosen);
+    on<ServicesConfirmed>(_onServicesConfirmed);
     on<SignOutRequested>(_onSignOutRequested);
   }
 
+  // ─── Sessiyani tekshirish ──────────────────────────────────
   Future<void> _onCheckAuthStatus(CheckAuthStatus event, Emitter<AuthState> emit) async {
     emit(AuthLoading());
     final session = _db.client.auth.currentSession;
@@ -87,7 +137,6 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       emit(AuthUnauthenticated());
       return;
     }
-
     try {
       final userId = _db.currentUserId!;
       final profile = await _db.client
@@ -97,124 +146,122 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
           .maybeSingle();
 
       if (profile == null) {
-        emit(AuthNeedsRegistration(userId: userId, phone: _db.client.auth.currentUser!.phone ?? ''));
+        // Sessiya bor, profil yo'q → ism bosqichiga
+        final emailPrefix = _db.client.auth.currentUser?.email?.split('@').first ?? '';
+        emit(AuthNameStep(phone: '+$emailPrefix', userId: userId));
       } else {
-        final String role = profile['role'];
-        final bool isVerified = profile['is_verified'] ?? false;
-
-        if (role == 'MASTER' && !isVerified) {
-          emit(AuthPendingVerification());
-        } else {
-          emit(AuthAuthenticated(role: role, profile: profile));
-        }
+        emit(AuthAuthenticated(role: profile['role'], profile: profile));
       }
     } catch (e) {
       emit(AuthError('Profil tekshirishda xatolik: $e'));
     }
   }
 
-  Future<void> _onSendOtpRequested(SendOtpRequested event, Emitter<AuthState> emit) async {
+  // ─── Telefon kiritildi ─────────────────────────────────────
+  Future<void> _onPhoneSubmitted(PhoneSubmitted event, Emitter<AuthState> emit) async {
     emit(AuthLoading());
     try {
-      await _db.sendOtp(event.phone);
-      emit(AuthOtpSent(event.phone));
+      final result = await _db.loginWithPhone(event.phone);
+      final userId = result['user_id'] as String;
+      final profile = result['profile'];
+
+      if (profile != null) {
+        // Mavjud foydalanuvchi → panelga
+        emit(AuthAuthenticated(role: profile['role'], profile: profile));
+      } else {
+        // Yangi foydalanuvchi → ism bosqichi
+        emit(AuthNameStep(phone: event.phone, userId: userId));
+      }
     } catch (e) {
       emit(AuthError(e.toString()));
     }
   }
 
-  Future<void> _onVerifyOtpRequested(VerifyOtpRequested event, Emitter<AuthState> emit) async {
+  // ─── Ism kiritildi ────────────────────────────────────────
+  Future<void> _onNameSubmitted(NameSubmitted event, Emitter<AuthState> emit) async {
+    if (state is! AuthNameStep) return;
+    final s = state as AuthNameStep;
+    emit(AuthPhotoStep(phone: s.phone, userId: s.userId, name: event.name));
+  }
+
+  // ─── Rasm yuklanmoqda ─────────────────────────────────────
+  Future<void> _onPhotoUploadRequested(PhotoUploadRequested event, Emitter<AuthState> emit) async {
+    if (state is! AuthPhotoStep) return;
+    final s = state as AuthPhotoStep;
+    emit(AuthLoading());
+    // Yuklash amalga oshmasa null qaytadi — ilovani bloklamaydi
+    final photoUrl = await _db.uploadAvatar(s.userId, event.bytes, event.extension);
+    emit(AuthRoleStep(phone: s.phone, userId: s.userId, name: s.name, photoUrl: photoUrl));
+  }
+
+  // ─── Rasm o'tkazib yuborildi ───────────────────────────────
+  Future<void> _onPhotoSkipped(PhotoSkipped event, Emitter<AuthState> emit) async {
+    if (state is! AuthPhotoStep) return;
+    final s = state as AuthPhotoStep;
+    emit(AuthRoleStep(phone: s.phone, userId: s.userId, name: s.name, photoUrl: null));
+  }
+
+  // ─── User roli tanlandi ────────────────────────────────────
+  Future<void> _onUserRoleChosen(UserRoleChosen event, Emitter<AuthState> emit) async {
+    if (state is! AuthRoleStep) return;
+    final s = state as AuthRoleStep;
     emit(AuthLoading());
     try {
-      final data = await _db.verifyOtp(event.phone, event.code);
-      
-      final bool hasProfile = data['has_profile'] ?? false;
-      
-      if (!hasProfile) {
-        emit(AuthNeedsRegistration(userId: data['user']['id'], phone: event.phone));
-      } else {
-        final String role = data['role'];
-        final Map<String, dynamic> user = data['user'];
-        
-        // Profilni yuklash
-        final profile = await _db.client
-            .from('profiles')
-            .select()
-            .eq('id', user['id'])
-            .single();
-
-        final bool isVerified = profile['is_verified'] ?? false;
-
-        if (role == 'MASTER' && !isVerified) {
-          emit(AuthPendingVerification());
-        } else {
-          emit(AuthAuthenticated(role: role, profile: profile));
-        }
-      }
+      await _db.createProfile(
+        userId: s.userId,
+        phone: s.phone,
+        fullName: s.name,
+        role: 'USER',
+        photoUrl: s.photoUrl,
+      );
+      final profile = await _db.client.from('profiles').select().eq('id', s.userId).single();
+      emit(AuthAuthenticated(role: 'USER', profile: profile));
     } catch (e) {
-      emit(AuthError('Kod tasdiqlanmadi: ${e.toString()}'));
+      emit(AuthError('Profil yaratishda xatolik: $e'));
     }
   }
 
-  Future<void> _onRegisterDetailsSubmitted(RegisterDetailsSubmitted event, Emitter<AuthState> emit) async {
+  // ─── Usta roli tanlandi → xizmatlarni yuklash ─────────────
+  Future<void> _onMasterRoleChosen(MasterRoleChosen event, Emitter<AuthState> emit) async {
+    if (state is! AuthRoleStep) return;
+    final s = state as AuthRoleStep;
     emit(AuthLoading());
     try {
-      final userId = _db.currentUserId!;
-      final currentUser = _db.client.auth.currentUser!;
-      String phone = currentUser.phone ?? '';
-      if (phone.isEmpty && currentUser.email != null && currentUser.email!.endsWith('@masterhelp.uz')) {
-        phone = '+' + currentUser.email!.split('@')[0];
-      }
-
-      // 1. Profiles jadvaliga yozish
-      final profileData = {
-        'id': userId,
-        'phone': phone,
-        'role': event.role,
-        'full_name': event.fullName,
-        'avatar_url': event.avatarUrl,
-        'is_verified': event.role == 'USER', // Foydalanuvchi auto-verified, Usta esa yo'q
-        'is_online': false
-      };
-
-      await _db.client.from('profiles').insert(profileData);
-
-      // 2. Agar usta bo'lsa qo'shimcha ma'lumotlarni yozish
-      if (event.role == 'MASTER') {
-        // master_profiles trigger orqali avtomatik yaratiladi, faqat yangilaymiz
-        await _db.client.from('master_profiles').update({
-          'experience_years': event.experienceYears ?? 0,
-          'about': event.about ?? '',
-        }).eq('id', userId);
-
-        // Usta mashina brendlari (Many-to-Many)
-        if (event.selectedBrands != null) {
-          final list = event.selectedBrands!.map((brandId) => {
-            'master_id': userId,
-            'brand_id': brandId
-          }).toList();
-          await _db.client.from('master_cars').insert(list);
-        }
-
-        // Usta xizmatlari va narxlari (Many-to-Many)
-        if (event.selectedServices != null) {
-          final list = event.selectedServices!.map((s) => {
-            'master_id': userId,
-            'service_id': s['service_id'],
-            'price': s['price']
-          }).toList();
-          await _db.client.from('master_services').insert(list);
-        }
-
-        emit(AuthPendingVerification());
-      } else {
-        emit(AuthAuthenticated(role: 'USER', profile: profileData));
-      }
+      final services = await _db.fetchServices();
+      emit(AuthServiceStep(
+        phone: s.phone,
+        userId: s.userId,
+        name: s.name,
+        photoUrl: s.photoUrl,
+        services: services,
+      ));
     } catch (e) {
-      emit(AuthError('Ro\'yxatdan o\'tishda xatolik: $e'));
+      emit(AuthError('Xizmatlarni yuklashda xatolik: $e'));
     }
   }
 
+  // ─── Xizmatlar tasdiqlandi → usta profili yaratish ────────
+  Future<void> _onServicesConfirmed(ServicesConfirmed event, Emitter<AuthState> emit) async {
+    if (state is! AuthServiceStep) return;
+    final s = state as AuthServiceStep;
+    emit(AuthLoading());
+    try {
+      await _db.createProfile(
+        userId: s.userId,
+        phone: s.phone,
+        fullName: s.name,
+        role: 'MASTER',
+        photoUrl: s.photoUrl,
+        serviceIds: event.serviceIds,
+      );
+      final profile = await _db.client.from('profiles').select().eq('id', s.userId).single();
+      emit(AuthAuthenticated(role: 'MASTER', profile: profile));
+    } catch (e) {
+      emit(AuthError('Usta profili yaratishda xatolik: $e'));
+    }
+  }
+
+  // ─── Tizimdan chiqish ─────────────────────────────────────
   Future<void> _onSignOutRequested(SignOutRequested event, Emitter<AuthState> emit) async {
     emit(AuthLoading());
     await _db.signOut();

@@ -27,6 +27,9 @@ dependencies:
   cupertino_icons: ^1.0.6
   lucide_icons: ^0.257.0
 
+  # Image Picker (profile photo)
+  image_picker: ^1.1.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

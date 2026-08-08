@@ -1,3 +1,4 @@
+import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 class SupabaseConfig {
@@ -12,66 +13,139 @@ class SupabaseService {
 
   final SupabaseClient client = Supabase.instance.client;
 
-  // Foydalanuvchining joriy ID si
   String? get currentUserId => client.auth.currentUser?.id;
 
-  // ⚠️ SMS OTP VAQTINCHA DISABLED (SMS provider ulanmagan)
-  // SMS provider ulanganidan keyin bu metodlarni asl holiga qaytaring.
+  // ─────────────────────────────────────────────────────────────────────────
+  // ⚠️ SMS OTP BYPASS MODE (SMS provider ulanmagan)
+  // TODO: SMS provider ulanganidan keyin bu metodlarni o'zgartiring:
+  //   1. loginWithPhone → Edge Function 'send-otp' + 'verify-otp' bilan
+  //   2. Bu metodni ikkiga bo'ling: sendOtp() va verifyOtp()
+  // ─────────────────────────────────────────────────────────────────────────
+  Future<Map<String, dynamic>> loginWithPhone(String phone) async {
+    // Telefon raqamni email ko'rinishiga o'giramiz (bypass)
+    final cleanPhone = phone.replaceAll(RegExp(r'[^0-9]'), '');
+    final fakeEmail = '$cleanPhone@avtohelp.uz';
+    final fakePassword = 'avtohelp_bypass_$cleanPhone';
 
-  // OTP SMS yuborish — hozircha bypass (hech narsa qilmaydi)
-  Future<Map<String, dynamic>> sendOtp(String phone) async {
-    // TODO: SMS provider ulanganidan keyin Edge Function 'send-otp' ni yoqing
-    // Hozircha shunchaki muvaffaqiyat qaytaradi
-    return {'success': true, 'message': 'bypass mode'};
+    AuthResponse authResponse;
+    try {
+      // Mavjud foydalanuvchi — login
+      authResponse = await client.auth.signInWithPassword(
+        email: fakeEmail,
+        password: fakePassword,
+      );
+    } catch (_) {
+      // Yangi foydalanuvchi — ro'yxatdan o'tkazish
+      authResponse = await client.auth.signUp(
+        email: fakeEmail,
+        password: fakePassword,
+      );
+    }
+
+    final user = authResponse.user;
+    if (user == null) throw Exception('Kirish amalga oshmadi');
+
+    // Profil mavjudligini tekshirish
+    final profile = await client
+        .from('profiles')
+        .select()
+        .eq('id', user.id)
+        .maybeSingle();
+
+    return {
+      'user_id': user.id,
+      'profile': profile, // null → yangi foydalanuvchi
+    };
   }
 
-  // OTP tasdiqlash — hozircha bypass (istalgan kod bilan kirish)
-  // Supabase email trick: telefon raqamni email formatiga o'girib anonymous login
-  Future<Map<String, dynamic>> verifyOtp(String phone, String code) async {
-    // TODO: SMS provider ulanganidan keyin Edge Function 'verify-otp' ni yoqing
+  // ─────────────────────────────────────────────────────────────────────────
+  // Profil rasmi yuklash (Supabase Storage 'avatars' bucket)
+  // ─────────────────────────────────────────────────────────────────────────
+  Future<String?> uploadAvatar(String userId, Uint8List bytes, String extension) async {
     try {
-      // Telefon raqamni email ko'rinishiga o'giramiz: +998901234567 → 998901234567@avtohelp.uz
-      final cleanPhone = phone.replaceAll(RegExp(r'[^0-9]'), '');
-      final fakeEmail = '$cleanPhone@avtohelp.uz';
-      // OTP kodi parol sifatida ishlatiladi (bypass: istalgan 4-raqamli kod)
-      final fakePassword = 'avtohelp_$cleanPhone';
-
-      AuthResponse authResponse;
-      try {
-        // Avval login qilib ko'ramiz
-        authResponse = await client.auth.signInWithPassword(
-          email: fakeEmail,
-          password: fakePassword,
-        );
-      } catch (_) {
-        // Foydalanuvchi mavjud emas — yangi ro'yxatdan o'tkazamiz
-        authResponse = await client.auth.signUp(
-          email: fakeEmail,
-          password: fakePassword,
-        );
-      }
-
-      final user = authResponse.user;
-      if (user == null) throw Exception('Kirish amalga oshmadi');
-
-      // Profil mavjudligini tekshirish
-      final profile = await client
-          .from('profiles')
-          .select()
-          .eq('id', user.id)
-          .maybeSingle();
-
-      return {
-        'user': {'id': user.id, 'email': user.email},
-        'has_profile': profile != null,
-        'role': profile?['role'],
-      };
+      final fileName = '$userId.$extension';
+      await client.storage.from('avatars').uploadBinary(
+        fileName,
+        bytes,
+        fileOptions: const FileOptions(upsert: true),
+      );
+      return client.storage.from('avatars').getPublicUrl(fileName);
     } catch (e) {
-      throw Exception('Kirish xatosi: $e');
+      // Rasm yuklash muvaffaqiyatsiz bo'lsa, skip qilamiz
+      return null;
     }
   }
 
-  // RPC: 3km radiusda yaqin ustalarni qidirish (PostGIS)
+  // ─────────────────────────────────────────────────────────────────────────
+  // Xizmatlar ro'yxatini yuklash (admin panel orqali qo'shiladi)
+  // ─────────────────────────────────────────────────────────────────────────
+  Future<List<Map<String, dynamic>>> fetchServices() async {
+    try {
+      final response = await client.from('services').select().order('name');
+      return List<Map<String, dynamic>>.from(response);
+    } catch (e) {
+      throw Exception('Xizmatlarni yuklashda xatolik: $e');
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Profil yaratish (user va master uchun)
+  // ─────────────────────────────────────────────────────────────────────────
+  Future<void> createProfile({
+    required String userId,
+    required String phone,
+    required String fullName,
+    required String role, // 'USER' yoki 'MASTER'
+    String? photoUrl,
+    List<int>? serviceIds, // Faqat MASTER uchun
+  }) async {
+    // 1. Asosiy profil yaratish
+    await client.from('profiles').insert({
+      'id': userId,
+      'phone': phone,
+      'role': role,
+      'full_name': fullName,
+      'avatar_url': photoUrl,
+      'is_verified': role == 'USER', // User — avtomatik verified
+      'is_online': false,
+    });
+
+    // 2. Usta qo'shimcha ma'lumotlari
+    if (role == 'MASTER') {
+      // master_profiles trigger orqali avtomatik yaratiladi
+      await client.from('master_profiles').update({
+        'experience_years': 0,
+        'about': '',
+      }).eq('id', userId);
+
+      // Tanlangan xizmatlarni qo'shish
+      if (serviceIds != null && serviceIds.isNotEmpty) {
+        await client.from('master_services').insert(
+          serviceIds.map((id) => {
+            'master_id': userId,
+            'service_id': id,
+            'price': 0, // Narx keyinroq ustaning o'zi belgilaydi
+          }).toList(),
+        );
+      }
+    }
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // Joylashuv yangilash (PostGIS WKT format)
+  // ─────────────────────────────────────────────────────────────────────────
+  Future<void> updateLocation(double lat, double lng) async {
+    final userId = currentUserId;
+    if (userId == null) return;
+    await client.from('profiles').update({
+      'location': 'POINT($lng $lat)',
+      'last_location_at': DateTime.now().toIso8601String(),
+    }).eq('id', userId);
+  }
+
+  // ─────────────────────────────────────────────────────────────────────────
+  // 3km radiusda ustalarni qidirish (PostGIS RPC)
+  // ─────────────────────────────────────────────────────────────────────────
   Future<List<dynamic>> searchNearbyMasters({
     required double latitude,
     required double longitude,
@@ -96,21 +170,7 @@ class SupabaseService {
     }
   }
 
-  // Location update: profildagi joriy joylashuvni yangilash
-  Future<void> updateLocation(double lat, double lng) async {
-    final userId = currentUserId;
-    if (userId == null) return;
-    
-    // WKT (Well-Known Text) formatida point yaratish
-    final pointWkt = 'POINT($lng $lat)';
-    
-    await client.from('profiles').update({
-      'location': pointWkt,
-      'last_location_at': DateTime.now().toIso8601String(),
-    }).eq('id', userId);
-  }
-
-  // Logout xizmati
+  // Tizimdan chiqish
   Future<void> signOut() async {
     await client.auth.signOut();
   }

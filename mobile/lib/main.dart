@@ -56,50 +56,72 @@ class AuthWrapper extends StatelessWidget {
   Widget build(BuildContext context) {
     return BlocBuilder<AuthBloc, AuthState>(
       builder: (context, state) {
-        if (state is AuthLoading) {
+        // Yuklanyapti
+        if (state is AuthLoading || state is AuthInitial) {
           return const Scaffold(
+            backgroundColor: Color(0xFFF5F7FB),
             body: Center(
-              child: CircularProgressIndicator(color: Color(0xFF00D2ff)),
+              child: CircularProgressIndicator(color: Color(0xFF132F4C)),
             ),
           );
-        } else if (state is AuthOtpSent) {
-          return OtpScreen(phone: state.phone);
-        } else if (state is AuthNeedsRegistration) {
-          return RoleChoiceScreen(userId: state.userId, phone: state.phone);
-        } else if (state is AuthPendingVerification) {
-          return const PendingVerificationScreen();
-        } else if (state is AuthAuthenticated) {
+        }
+
+        // ── Ro'yxatdan o'tish qadamlari ────────────────────
+        if (state is AuthNameStep) {
+          return const NameInputScreen();
+        }
+        if (state is AuthPhotoStep) {
+          return const PhotoUploadScreen();
+        }
+        if (state is AuthRoleStep) {
+          return const RoleChoiceScreen();
+        }
+        if (state is AuthServiceStep) {
+          return ServiceSelectionScreen(services: state.services);
+        }
+
+        // ── Kirgan foydalanuvchi ──────────────────────────
+        if (state is AuthAuthenticated) {
           return HomeScreen(userProfile: state.profile);
-        } else if (state is AuthError) {
+        }
+
+        // ── Xatolik ───────────────────────────────────────
+        if (state is AuthError) {
           return Scaffold(
+            backgroundColor: const Color(0xFFF5F7FB),
             body: Center(
               child: Padding(
-                padding: const EdgeInsets.all(24.0),
+                padding: const EdgeInsets.all(28.0),
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    const Icon(Icons.error, color: Colors.redAccent, size: 60),
+                    const Icon(Icons.error_rounded, color: Colors.redAccent, size: 72),
                     const SizedBox(height: 16),
                     Text(
                       state.message,
-                      style: const TextStyle(color: Colors.white, fontSize: 16),
+                      style: const TextStyle(color: Color(0xFF132F4C), fontSize: 16, height: 1.5),
                       textAlign: TextAlign.center,
                     ),
-                    const SizedBox(height: 24),
+                    const SizedBox(height: 28),
                     ElevatedButton(
-                      onPressed: () {
-                        context.read<AuthBloc>().add(CheckAuthStatus());
-                      },
-                      child: const Text('Qayta urunish'),
-                    )
+                      onPressed: () => context.read<AuthBloc>().add(CheckAuthStatus()),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: const Color(0xFF132F4C),
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+                      ),
+                      child: const Text('Qayta urunish', style: TextStyle(fontSize: 16)),
+                    ),
                   ],
                 ),
               ),
             ),
           );
-        } else {
-          return const LoginScreen();
         }
+
+        // ── Default: Login ekrani ─────────────────────────
+        return const LoginScreen();
       },
     );
   }
