@@ -24,7 +24,7 @@ class SupabaseService {
   Future<Map<String, dynamic>> loginWithPhone(String phone) async {
     // Telefon raqamni email ko'rinishiga o'giramiz (bypass)
     final cleanPhone = phone.replaceAll(RegExp(r'[^0-9]'), '');
-    final fakeEmail = '$cleanPhone@avtohelp.uz';
+    final fakeEmail = 'user_$cleanPhone@avtohelp.uz';
     final fakePassword = 'avtohelp_bypass_$cleanPhone';
 
     AuthResponse authResponse;
