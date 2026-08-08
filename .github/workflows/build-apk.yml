@@ -88,6 +88,17 @@ jobs:
           cd mobile
           flutter pub get
 
+      - name: Set iOS deployment target to 14.0
+        run: |
+          cd mobile/ios
+          # Update platform version in Podfile (google_maps_flutter requires >= 14.0)
+          sed -i '' "s/# platform :ios, '[0-9.]*'/platform :ios, '14.0'/" Podfile
+          sed -i '' "s/platform :ios, '[0-9.]*'/platform :ios, '14.0'/" Podfile
+          echo "--- Podfile platform line ---"
+          grep "platform" Podfile || echo "(no platform line found, adding)"
+          # If no platform line exists at all, prepend it
+          grep -q "^platform" Podfile || sed -i '' "1s/^/platform :ios, '14.0'\n/" Podfile
+
       - name: Install CocoaPods dependencies
         run: |
           cd mobile/ios
