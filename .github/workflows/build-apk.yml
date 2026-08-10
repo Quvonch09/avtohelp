@@ -1,178 +1,277 @@
-name: Build Mobile Apps (Android APK + iOS IPA)
+name: Build Mobile Apps
 
 on:
   push:
-    branches: [ main, master ]
+    branches:
+      - main
   pull_request:
-    branches: [ main, master ]
+    branches:
+      - main
   workflow_dispatch:
 
 jobs:
-  # ────────────────────────────────────────────────────────────────────────
-  #  Android APK Build
-  # ────────────────────────────────────────────────────────────────────────
+  # =============================================================
+  # 1. ANDROID BUILD JOB
+  # =============================================================
   build-android:
-    name: Build Android APK
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Java Development Kit (JDK)
-        uses: actions/setup-java@v5
+      - name: Setup Java 17
+        uses: actions/setup-java@v4
         with:
           distribution: 'zulu'
           java-version: '17'
 
-      - name: Set up Flutter
+      - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: true
 
-      - name: Generate Android platform files
-        run: |
-          cd mobile
-          flutter create --platforms android . --project-name master_help
-
-      - name: Get Flutter dependencies
+      - name: Install dependencies
         run: |
           cd mobile
           flutter pub get
 
       - name: Build Android APK
-        run: |
-          cd mobile
-          flutter build apk --release --no-pub
         env:
           GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+        run: |
+          cd mobile
+          flutter build apk --release
 
       - name: Upload APK Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Avtohelp-Android-Release-APK
+          name: Avtohelp-Android-APK
           path: mobile/build/app/outputs/flutter-apk/app-release.apk
-          if-no-files-found: warn
 
-  # ────────────────────────────────────────────────────────────────────────
-  #  iOS Signed Ad Hoc IPA Build
-  # ────────────────────────────────────────────────────────────────────────
+  # =============================================================
+  # 2. IOS AD HOC IPA BUILD JOB
+  # =============================================================
   build-ios:
-    name: Build Signed iOS IPA
     runs-on: macos-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Flutter
+      # Verify all required Secrets are configured
+      - name: Verify GitHub Secrets
+        run: |
+          if [ -z "${{ secrets.P12_BASE64 }}" ]; then
+            echo "::error::Missing P12_BASE64 secret. Please set it in repository settings."
+            exit 1
+          fi
+          if [ -z "${{ secrets.P12_PASSWORD }}" ]; then
+            echo "::error::Missing P12_PASSWORD secret. Please set it in repository settings."
+            exit 1
+          fi
+          if [ -z "${{ secrets.PROVISIONING_PROFILE_BASE64 }}" ]; then
+            echo "::error::Missing PROVISIONING_PROFILE_BASE64 secret. Please set it in repository settings."
+            exit 1
+          fi
+          if [ -z "${{ secrets.KEYCHAIN_PASSWORD }}" ]; then
+            echo "::error::Missing KEYCHAIN_PASSWORD secret. Please set it in repository settings."
+            exit 1
+          fi
+          if [ -z "${{ secrets.GOOGLE_MAPS_API_KEY }}" ]; then
+            echo "::error::Missing GOOGLE_MAPS_API_KEY secret. Please set it in repository settings."
+            exit 1
+          fi
+          echo "[+] All required secrets are verified."
+
+      - name: Setup Flutter
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: true
 
-      - name: Get Flutter dependencies
+      - name: Install dependencies
         run: |
           cd mobile
           flutter pub get
 
-      - name: Set iOS deployment target to 14.0
-        run: |
-          cd mobile/ios
-          sed -i '' "s/# platform :ios, '[0-9.]*'/platform :ios, '14.0'/" Podfile
-          sed -i '' "s/platform :ios, '[0-9.]*'/platform :ios, '14.0'/" Podfile
-          grep -q "^platform" Podfile || sed -i '' "1s/^/platform :ios, '14.0'\n/" Podfile
-          echo "--- Podfile ---"
-          cat Podfile | grep platform
-
-      - name: Install CocoaPods dependencies
-        run: |
-          cd mobile/ios
-          pod install --repo-update
-
-      - name: Install Apple Certificate and Provisioning Profile
+      - name: Install Apple Certificates & Provisioning Profile
         env:
           P12_BASE64: ${{ secrets.P12_BASE64 }}
           P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
           PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
         run: |
-          # 1. Fail early if required signing secrets are missing
-          if [ -z "$P12_BASE64" ] || [ -z "$P12_PASSWORD" ] || [ -z "$PROVISIONING_PROFILE_BASE64" ]; then
-            echo "Error: One or more signing secrets (P12_BASE64, P12_PASSWORD, PROVISIONING_PROFILE_BASE64) are missing."
-            exit 1
-          fi
-
-          # 2. Setup variables
-          CERTIFICATE_PATH=$RUNNER_TEMP/build_certificate.p12
-          PP_PATH=$RUNNER_TEMP/build_pp.mobileprovision
+          # 1. Path definitions
+          CERTIFICATE_PATH=$RUNNER_TEMP/distribution.p12
+          PP_PATH=$RUNNER_TEMP/profile.mobileprovision
           KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
 
-          # 3. Import certificate and provisioning profile from secrets
-          echo -n "$P12_BASE64" | base64 --decode -o $CERTIFICATE_PATH
-          echo -n "$PROVISIONING_PROFILE_BASE64" | base64 --decode -o $PP_PATH
+          # 2. Decode files from Base64
+          echo "$P12_BASE64" | base64 --decode > "$CERTIFICATE_PATH"
+          echo "$PROVISIONING_PROFILE_BASE64" | base64 --decode > "$PP_PATH"
 
-          # 4. Create temporary keychain
-          security create-keychain -p "$P12_PASSWORD" $KEYCHAIN_PATH
-          security default-keychain -s $KEYCHAIN_PATH
-          security unlock-keychain -p "$P12_PASSWORD" $KEYCHAIN_PATH
+          # 3. Create temporary macOS keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security default-keychain -s "$KEYCHAIN_PATH"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+          security set-keychain-settings -t 3600 -u "$KEYCHAIN_PATH"
 
-          # 5. Import certificate to keychain
-          security import $CERTIFICATE_PATH -k $KEYCHAIN_PATH -P "$P12_PASSWORD" -A -t cert -f pkcs12
-          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$P12_PASSWORD" $KEYCHAIN_PATH
+          # 4. Import certificate to keychain
+          security import "$CERTIFICATE_PATH" -k "$KEYCHAIN_PATH" -P "$P12_PASSWORD" -T /usr/bin/codesign -T /usr/bin/productsign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
 
-          # 6. Extract UUID from profile and copy to Provisioning Profiles directory
-          UUID=$(security cms -D -i $PP_PATH | grep -A1 UUID | grep string | sed -E 's/<\/?string>//g' | tr -d '[:space:]')
+          # 5. Install Provisioning Profile
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
-          cp $PP_PATH ~/Library/MobileDevice/Provisioning\ Profiles/$UUID.mobileprovision
-          echo "Provisioning Profile installed with UUID: $UUID"
+          cp "$PP_PATH" ~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
 
-      - name: Build iOS IPA (Ad Hoc Distribution)
+          # 6. Verify certificate import
+          echo "============================================="
+          echo "Installed Code Signing Identities:"
+          security find-identity -v -p codesigning "$KEYCHAIN_PATH"
+          echo "============================================="
+
+      - name: Inspect and Validate Provisioning Profile
+        run: |
+          PP_PATH=~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
+          
+          # Decode profile to plist format
+          PLIST_CONTENT=$(security cms -D -i "$PP_PATH")
+          
+          # Extract metadata
+          TEAM_IDENTIFIER=$(/usr/libexec/PlistBuddy -c "Print :TeamIdentifier:0" /dev/stdin <<< "$PLIST_CONTENT")
+          APP_ID_PREFIX=$(/usr/libexec/PlistBuddy -c "Print :ApplicationIdentifierPrefix:0" /dev/stdin <<< "$PLIST_CONTENT")
+          PROFILE_NAME=$(/usr/libexec/PlistBuddy -c "Print :Name" /dev/stdin <<< "$PLIST_CONTENT")
+          EXPIRATION_DATE=$(/usr/libexec/PlistBuddy -c "Print :ExpirationDate" /dev/stdin <<< "$PLIST_CONTENT")
+          APP_ID=$(/usr/libexec/PlistBuddy -c "Print :Entitlements:application-identifier" /dev/stdin <<< "$PLIST_CONTENT")
+          BUNDLE_ID_FROM_PROFILE=${APP_ID#*.}
+
+          echo "============================================="
+          echo "Provisioning Profile Summary:"
+          echo "Name: $PROFILE_NAME"
+          echo "Team ID: $TEAM_IDENTIFIER"
+          echo "App ID Prefix: $APP_ID_PREFIX"
+          echo "App ID (Entitlement): $APP_ID"
+          echo "Bundle ID from Profile: $BUNDLE_ID_FROM_PROFILE"
+          echo "Expiration Date: $EXPIRATION_DATE"
+          echo "============================================="
+
+          # Verify expiration date
+          EXPIRY_EPOCH=$(date -j -f "%a %b %d %T %Z %Y" "$EXPIRATION_DATE" "+%s" 2>/dev/null || date -d "$EXPIRATION_DATE" "+%s" 2>/dev/null)
+          NOW_EPOCH=$(date "+%s")
+          if [ "$EXPIRY_EPOCH" -lt "$NOW_EPOCH" ]; then
+            echo "::error::The Provisioning Profile has expired!"
+            exit 1
+          fi
+
+          # Compare Bundle ID with Xcode project Bundle ID
+          XCODE_BUNDLE_ID="uz.avtohelp.master_help"
+          if [ "$BUNDLE_ID_FROM_PROFILE" != "$XCODE_BUNDLE_ID" ] && [ "$BUNDLE_ID_FROM_PROFILE" != "$APP_ID_PREFIX.$XCODE_BUNDLE_ID" ]; then
+            echo "::error::Bundle ID Mismatch! Xcode project expects '$XCODE_BUNDLE_ID', but profile is for '$BUNDLE_ID_FROM_PROFILE'."
+            exit 1
+          fi
+
+          # Dynamically create ExportOptions.plist
+          UUID=$(/usr/libexec/PlistBuddy -c "Print :UUID" /dev/stdin <<< "$PLIST_CONTENT")
+          cat <<EOF > mobile/ios/ExportOptions.plist
+          <?xml version="1.0" encoding="UTF-8"?>
+          <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+          <plist version="1.0">
+          <dict>
+              <key>method</key>
+              <string>ad-hoc</string>
+              <key>teamID</key>
+              <string>$TEAM_IDENTIFIER</string>
+              <key>compileBitcode</key>
+              <false/>
+              <key>thinning</key>
+              <string>&lt;none&gt;</string>
+              <key>signingStyle</key>
+              <string>manual</string>
+              <key>provisioningProfiles</key>
+              <dict>
+                  <key>$XCODE_BUNDLE_ID</key>
+                  <string>$UUID</string>
+              </dict>
+          </dict>
+          </plist>
+          EOF
+          
+          echo "[+] Dynamically created ExportOptions.plist at mobile/ios/ExportOptions.plist"
+
+      - name: Inject Google Maps API Key
+        run: |
+          # Inject the API Key into release configurations so Xcode resolves it
+          echo "GOOGLE_MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }}" >> mobile/ios/Flutter/Release.xcconfig
+          echo "GOOGLE_MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }}" >> mobile/ios/Flutter/Debug.xcconfig
+          echo "[+] Injected GOOGLE_MAPS_API_KEY into iOS build configurations."
+
+      - name: Build Code-Signed IPA
         run: |
           cd mobile
-          flutter build ipa --release --export-method=ad-hoc --no-pub
-        env:
-          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
+          # Build signed IPA using the generated ExportOptions
+          flutter build ipa --release --export-options-plist=ios/ExportOptions.plist
 
-      - name: Verify IPA Signature
+      - name: Verify IPA Code Signature & Assets
         run: |
-          cd mobile/build/ios/ipa
-          # Find the generated .ipa file
-          IPA_FILE=$(find . -name "*.ipa" | head -1)
-          if [ -z "$IPA_FILE" ]; then
-            echo "Error: No IPA file was generated by Flutter."
+          # 1. Find the generated IPA
+          IPA_PATH=$(find mobile/build/ios/ipa -name "*.ipa" | head -n 1)
+          if [ -z "$IPA_PATH" ]; then
+            echo "::error::Signed IPA file was not generated by Xcode!"
             exit 1
           fi
-          echo "Found IPA: $IPA_FILE"
+          echo "[+] Found generated IPA: $IPA_PATH"
+
+          # 2. Extract IPA temporarily to verify
+          TEMP_DIR=$RUNNER_TEMP/ipa-extracted
+          unzip -q "$IPA_PATH" -d "$TEMP_DIR"
           
-          # Unzip it to inspect the app bundle
-          unzip -q "$IPA_FILE" -d ipa_temp
-          APP_PATH=$(find ipa_temp/Payload -name "*.app" | head -1)
+          APP_PATH=$(find "$TEMP_DIR/Payload" -name "*.app" | head -n 1)
           if [ -z "$APP_PATH" ]; then
-            echo "Error: App bundle not found inside Payload."
+            echo "::error::Payload/*.app not found inside the IPA!"
             exit 1
           fi
-          echo "Inspecting app bundle at: $APP_PATH"
-          
-          # Run verification and print signing certificate details
-          codesign -vd "$APP_PATH"
-          
-          # Verify entitlements/validity
-          codesign --verify --verbose "$APP_PATH"
-          
-          # Clean up temp folder
-          rm -rf ipa_temp
+          echo "[+] Found App Payload: $APP_PATH"
 
-      - name: Clean up temporary keychain and profiles
-        if: always()
-        run: |
-          security delete-keychain $RUNNER_TEMP/app-signing.keychain-db || true
-          rm -f $RUNNER_TEMP/build_certificate.p12
-          rm -f $RUNNER_TEMP/build_pp.mobileprovision
+          # 3. Verify Code Signing using codesign tool
+          echo "============================================="
+          echo "Codesign Verification Output:"
+          codesign -dvvv "$APP_PATH"
+          echo "---------------------------------------------"
+          codesign --verify --deep --strict --verbose=4 "$APP_PATH"
+          if [ $? -ne 0 ]; then
+            echo "::error::Code signing verification failed for the app package!"
+            exit 1
+          fi
+          echo "============================================="
 
-      - name: Upload Signed Ad Hoc IPA Artifact
+          # 4. Verify embedded provisioning profile
+          EMBEDDED_PROFILE="$APP_PATH/embedded.mobileprovision"
+          if [ ! -f "$EMBEDDED_PROFILE" ]; then
+            echo "::error::embedded.mobileprovision is missing inside the App package!"
+            exit 1
+          fi
+          echo "[+] Verified: embedded.mobileprovision exists."
+
+          # 5. Verify real device architectures (ARM64)
+          echo "============================================="
+          echo "App Binary Architectures:"
+          lipo -info "$APP_PATH/Runner"
+          echo "============================================="
+
+      - name: Upload IPA Artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Avtohelp-iOS-Signed-AdHoc-IPA
+          name: Avtohelp-iOS-AdHoc-IPA
           path: mobile/build/ios/ipa/*.ipa
-          if-no-files-found: warn
+
+      - name: Clean up Keychain & Signing Assets
+        if: always()
+        run: |
+          # Safely remove temporary keychain and provisioning profiles
+          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+          if [ -f "$KEYCHAIN_PATH" ]; then
+            security delete-keychain "$KEYCHAIN_PATH"
+            echo "[+] Temporary keychain deleted."
+          fi
+          rm -rf ~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
+          echo "[+] Temporary Provisioning Profile removed."
