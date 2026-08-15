@@ -47,55 +47,50 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: Avtohelp-Android-APK
-          path: mobile/build/app/outputs/flutter-apk/app-release.apk
+          path: mobile/build/app/outputs/flutter-apk/*.apk
 
   # =============================================================
   # 2. IOS AD HOC IPA BUILD JOB
   # =============================================================
   build-ios:
     runs-on: macos-latest
-    if: ${{ secrets.P12_BASE64 != '' }}
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
       # Verify all required Secrets are configured
       - name: Verify GitHub Secrets
+        id: check-secrets
+        env:
+          P12_BASE64: ${{ secrets.P12_BASE64 }}
+          P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
+          PROVISIONING_PROFILE_BASE64: ${{ secrets.PROVISIONING_PROFILE_BASE64 }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+          GOOGLE_MAPS_API_KEY: ${{ secrets.GOOGLE_MAPS_API_KEY }}
         run: |
-          if [ -z "${{ secrets.P12_BASE64 }}" ]; then
-            echo "::error::Missing P12_BASE64 secret. Please set it in repository settings."
-            exit 1
+          if [ -z "$P12_BASE64" ] || [ -z "$P12_PASSWORD" ] || [ -z "$PROVISIONING_PROFILE_BASE64" ] || [ -z "$KEYCHAIN_PASSWORD" ] || [ -z "$GOOGLE_MAPS_API_KEY" ]; then
+            echo "::warning::iOS signing secrets are not fully configured in repository settings. Skipping iOS build."
+            echo "configured=false" >> $GITHUB_OUTPUT
+          else
+            echo "[+] All required iOS secrets are verified."
+            echo "configured=true" >> $GITHUB_OUTPUT
           fi
-          if [ -z "${{ secrets.P12_PASSWORD }}" ]; then
-            echo "::error::Missing P12_PASSWORD secret. Please set it in repository settings."
-            exit 1
-          fi
-          if [ -z "${{ secrets.PROVISIONING_PROFILE_BASE64 }}" ]; then
-            echo "::error::Missing PROVISIONING_PROFILE_BASE64 secret. Please set it in repository settings."
-            exit 1
-          fi
-          if [ -z "${{ secrets.KEYCHAIN_PASSWORD }}" ]; then
-            echo "::error::Missing KEYCHAIN_PASSWORD secret. Please set it in repository settings."
-            exit 1
-          fi
-          if [ -z "${{ secrets.GOOGLE_MAPS_API_KEY }}" ]; then
-            echo "::error::Missing GOOGLE_MAPS_API_KEY secret. Please set it in repository settings."
-            exit 1
-          fi
-          echo "[+] All required secrets are verified."
 
       - name: Setup Flutter
+        if: steps.check-secrets.outputs.configured == 'true'
         uses: subosito/flutter-action@v2
         with:
           channel: 'stable'
           cache: true
 
       - name: Install dependencies
+        if: steps.check-secrets.outputs.configured == 'true'
         run: |
           cd mobile
           flutter pub get
 
       - name: Install Apple Certificates & Provisioning Profile
+        if: steps.check-secrets.outputs.configured == 'true'
         env:
           P12_BASE64: ${{ secrets.P12_BASE64 }}
           P12_PASSWORD: ${{ secrets.P12_PASSWORD }}
@@ -132,6 +127,7 @@ jobs:
           echo "============================================="
 
       - name: Inspect and Validate Provisioning Profile
+        if: steps.check-secrets.outputs.configured == 'true'
         run: |
           PP_PATH=~/Library/MobileDevice/Provisioning\ Profiles/profile.mobileprovision
           
@@ -200,6 +196,7 @@ jobs:
           echo "[+] Dynamically created ExportOptions.plist at mobile/ios/ExportOptions.plist"
 
       - name: Inject Google Maps API Key
+        if: steps.check-secrets.outputs.configured == 'true'
         run: |
           # Inject the API Key into release configurations so Xcode resolves it
           echo "GOOGLE_MAPS_API_KEY=${{ secrets.GOOGLE_MAPS_API_KEY }}" >> mobile/ios/Flutter/Release.xcconfig
@@ -207,12 +204,14 @@ jobs:
           echo "[+] Injected GOOGLE_MAPS_API_KEY into iOS build configurations."
 
       - name: Build Code-Signed IPA
+        if: steps.check-secrets.outputs.configured == 'true'
         run: |
           cd mobile
           # Build signed IPA using the generated ExportOptions
           flutter build ipa --release --export-options-plist=ios/ExportOptions.plist
 
       - name: Verify IPA Code Signature & Assets
+        if: steps.check-secrets.outputs.configured == 'true'
         run: |
           # 1. Find the generated IPA
           IPA_PATH=$(find mobile/build/ios/ipa -name "*.ipa" | head -n 1)
@@ -260,13 +259,14 @@ jobs:
           echo "============================================="
 
       - name: Upload IPA Artifact
+        if: steps.check-secrets.outputs.configured == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: Avtohelp-iOS-AdHoc-IPA
           path: mobile/build/ios/ipa/*.ipa
 
       - name: Clean up Keychain & Signing Assets
-        if: always()
+        if: always() && steps.check-secrets.outputs.configured == 'true'
         run: |
           # Safely remove temporary keychain and provisioning profiles
           KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
