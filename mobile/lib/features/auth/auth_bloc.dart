@@ -159,9 +159,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       if (profile != null) {
         emit(AuthAuthenticated(role: profile['role'], profile: profile));
       } else {
-        final email = _db.client.auth.currentUser?.email ?? '';
-        final clean = email.replaceAll(RegExp(r'[^0-9]'), '');
-        final phone = clean.isNotEmpty ? '+$clean' : '+998';
+        final phone = _db.client.auth.currentUser?.userMetadata?['phone'] ?? '+998';
         emit(AuthNameStep(phone: phone, userId: userId));
       }
     } catch (e) {
@@ -179,10 +177,10 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       final profile = result['profile'];
 
       if (profile != null) {
-        // Mavjud foydalanuvchi → to'g'ridan-to'g'ri bosh sahifaga
+        // Mavjud profil topildi → to'g'ridan-to'g'ri bosh sahifaga
         emit(AuthAuthenticated(role: profile['role'], profile: profile));
       } else {
-        // Yangi foydalanuvchi → bir martalik ism kiritish bosqichiga
+        // Yangi profil → bir martalik ism kiritish bosqichiga
         emit(AuthNameStep(phone: event.phone, userId: userId));
       }
     } catch (e) {

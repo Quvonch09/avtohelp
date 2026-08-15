@@ -16,7 +16,7 @@ class SupabaseService {
   String? get currentUserId => client.auth.currentUser?.id;
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Telefon raqam bilan doimiy avtorizatsiya (Auto-login va bir marta registratsiya)
+  // Telefon raqam bilan to'g'ridan-to'g'ri kirish (SMS/Email cheklovlarisiz)
   // ─────────────────────────────────────────────────────────────────────────
   Future<Map<String, dynamic>> loginWithPhone(String phone) async {
     final cleanPhone = phone.replaceAll(RegExp(r'[^0-9]'), '');
@@ -25,60 +25,49 @@ class SupabaseService {
     }
 
     final formattedPhone = phone.startsWith('+') ? phone : '+$cleanPhone';
-    final fakeEmail = 'u${cleanPhone}x@avtohelp.uz';
-    final fakePassword = 'av2h3lp_$cleanPhone';
 
     try {
-      // 1. Agar avvaldan keshda sessiya bo'lsa
-      final currentUser = client.auth.currentUser;
-      if (currentUser != null) {
-        var profile = await client
-            .from('profiles')
-            .select()
-            .eq('id', currentUser.id)
-            .maybeSingle();
-
-        if (profile != null) {
-          return {'user_id': currentUser.id, 'profile': profile};
-        }
-      }
-
-      // 2. Telefon raqamga bog'langan maxsus hisob orqali kirish
-      AuthResponse authResponse;
-      try {
-        authResponse = await client.auth.signInWithPassword(
-          email: fakeEmail,
-          password: fakePassword,
-        );
-      } catch (signInErr) {
-        // Agar hisob hali yaratilmagan bo'lsa → ro'yxatdan o'tkazish
-        authResponse = await client.auth.signUp(
-          email: fakeEmail,
-          password: fakePassword,
+      // 1. Agar mavjud sessiya bo'lmasa, anonim sessiya yaratish
+      var currentUser = client.auth.currentUser;
+      if (currentUser == null) {
+        final authResponse = await client.auth.signInAnonymously(
           data: {'phone': formattedPhone},
         );
+        currentUser = authResponse.user;
       }
 
-      final user = authResponse.user ?? client.auth.currentUser;
-      if (user == null) throw Exception('Tizimga kirish amalga oshmadi');
+      if (currentUser == null) {
+        throw Exception('Tizimga kirish amalga oshmadi');
+      }
 
-      // 3. Foydalanuvchi profili mavjudligini tekshirish
+      // 2. Foydalanuvchi profilini ID yoki Telefon raqami bo'yicha topish
       var profile = await client
           .from('profiles')
           .select()
-          .eq('id', user.id)
+          .eq('id', currentUser.id)
           .maybeSingle();
 
       if (profile == null) {
-        // Telefon raqam bo'yicha profilni tekshirish
-        profile = await client
+        // Avval ro'yxatdan o'tgan profilni telefon orqali topish
+        final existingByPhone = await client
             .from('profiles')
             .select()
             .eq('phone', formattedPhone)
             .maybeSingle();
+
+        if (existingByPhone != null) {
+          try {
+            await client.from('profiles').update({
+              'id': currentUser.id,
+            }).eq('phone', formattedPhone);
+          } catch (_) {}
+
+          profile = existingByPhone;
+          profile['id'] = currentUser.id;
+        }
       }
 
-      return {'user_id': user.id, 'profile': profile};
+      return {'user_id': currentUser.id, 'profile': profile};
     } catch (e) {
       print('Login error: $e');
       throw Exception('Kirishda xatolik yuz berdi: ${e.toString().replaceAll('Exception: ', '')}');
@@ -125,10 +114,12 @@ class SupabaseService {
     String? photoUrl,
     List<int>? serviceIds, // Faqat MASTER uchun
   }) async {
+    final formattedPhone = phone.startsWith('+') ? phone : '+$phone';
+
     // 1. Asosiy profil upsert
     await client.from('profiles').upsert({
       'id': userId,
-      'phone': phone,
+      'phone': formattedPhone,
       'role': role,
       'full_name': fullName,
       'avatar_url': photoUrl,
