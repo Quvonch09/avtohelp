@@ -34,6 +34,8 @@ android {
 
     signingConfigs {
         create("release") {
+            enableV1Signing = true
+            enableV2Signing = true
             val keystoreInApp = file("avtohelp-release.jks")
             if (keyPropertiesFile.exists()) {
                 keyAlias = keyProperties.getProperty("keyAlias") ?: "avtohelp"
