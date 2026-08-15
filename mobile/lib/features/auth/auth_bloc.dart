@@ -129,7 +129,7 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     on<SignOutRequested>(_onSignOutRequested);
   }
 
-  // ─── Sessiyani tekshirish ──────────────────────────────────
+  // ─── Sessiyani tekshirish (Auto-login) ──────────────────────
   Future<void> _onCheckAuthStatus(CheckAuthStatus event, Emitter<AuthState> emit) async {
     emit(AuthLoading());
     final session = _db.client.auth.currentSession;
@@ -139,21 +139,34 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     }
     try {
       final userId = _db.currentUserId!;
-      final profile = await _db.client
+      var profile = await _db.client
           .from('profiles')
           .select()
           .eq('id', userId)
           .maybeSingle();
 
       if (profile == null) {
-        // Sessiya bor, profil yo'q → ism bosqichiga
-        final emailPrefix = _db.client.auth.currentUser?.email?.split('@').first ?? '';
-        emit(AuthNameStep(phone: '+$emailPrefix', userId: userId));
-      } else {
+        final phoneMeta = _db.client.auth.currentUser?.userMetadata?['phone'] as String?;
+        if (phoneMeta != null && phoneMeta.isNotEmpty) {
+          profile = await _db.client
+              .from('profiles')
+              .select()
+              .eq('phone', phoneMeta)
+              .maybeSingle();
+        }
+      }
+
+      if (profile != null) {
         emit(AuthAuthenticated(role: profile['role'], profile: profile));
+      } else {
+        final email = _db.client.auth.currentUser?.email ?? '';
+        final clean = email.replaceAll(RegExp(r'[^0-9]'), '');
+        final phone = clean.isNotEmpty ? '+$clean' : '+998';
+        emit(AuthNameStep(phone: phone, userId: userId));
       }
     } catch (e) {
-      emit(AuthError('Profil tekshirishda xatolik: $e'));
+      print('CheckAuthStatus error: $e');
+      emit(AuthUnauthenticated());
     }
   }
 
@@ -166,14 +179,14 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
       final profile = result['profile'];
 
       if (profile != null) {
-        // Mavjud foydalanuvchi → panelga
+        // Mavjud foydalanuvchi → to'g'ridan-to'g'ri bosh sahifaga
         emit(AuthAuthenticated(role: profile['role'], profile: profile));
       } else {
-        // Yangi foydalanuvchi → ism bosqichi
+        // Yangi foydalanuvchi → bir martalik ism kiritish bosqichiga
         emit(AuthNameStep(phone: event.phone, userId: userId));
       }
     } catch (e) {
-      emit(AuthError(e.toString()));
+      emit(AuthError(e.toString().replaceAll('Exception: ', '')));
     }
   }
 
@@ -189,7 +202,6 @@ class AuthBloc extends Bloc<AuthEvent, AuthState> {
     if (state is! AuthPhotoStep) return;
     final s = state as AuthPhotoStep;
     emit(AuthLoading());
-    // Yuklash amalga oshmasa null qaytadi — ilovani bloklamaydi
     final photoUrl = await _db.uploadAvatar(s.userId, event.bytes, event.extension);
     emit(AuthRoleStep(phone: s.phone, userId: s.userId, name: s.name, photoUrl: photoUrl));
   }

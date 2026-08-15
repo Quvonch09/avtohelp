@@ -16,96 +16,73 @@ class SupabaseService {
   String? get currentUserId => client.auth.currentUser?.id;
 
   // ─────────────────────────────────────────────────────────────────────────
-  // ⚠️ SMS OTP BYPASS MODE (SMS provider ulanmagan)
-  // TODO: SMS provider ulanganida:
-  //   1. signInWithOtp(phone: phone) → OTP yuborish
-  //   2. verifyOTP(phone, token, OtpType.sms) → tasdiqlash
+  // Telefon raqam bilan doimiy avtorizatsiya (Auto-login va bir marta registratsiya)
   // ─────────────────────────────────────────────────────────────────────────
   Future<Map<String, dynamic>> loginWithPhone(String phone) async {
+    final cleanPhone = phone.replaceAll(RegExp(r'[^0-9]'), '');
+    if (cleanPhone.length < 9) {
+      throw Exception('Iltimos, telefon raqamingizni to\'liq kiriting');
+    }
+
+    final formattedPhone = phone.startsWith('+') ? phone : '+$cleanPhone';
+    final fakeEmail = 'u${cleanPhone}x@avtohelp.uz';
+    final fakePassword = 'av2h3lp_$cleanPhone';
+
     try {
-      // ── Qadam 1: Mavjud sessiyani tekshirish ─────────────────────────────
+      // 1. Agar avvaldan keshda sessiya bo'lsa
       final currentUser = client.auth.currentUser;
       if (currentUser != null) {
-        final profile = await client
+        var profile = await client
             .from('profiles')
             .select()
             .eq('id', currentUser.id)
             .maybeSingle();
-        // Sessiya va profil bor → to'g'ridan-to'g'ri kirish
+
         if (profile != null) {
           return {'user_id': currentUser.id, 'profile': profile};
         }
-        // Sessiya bor, profil yo'q → ro'yxatdan o'tish oqimi
-        return {'user_id': currentUser.id, 'profile': null};
       }
 
-      // ── Qadam 2: Anonymous auth (email/SMS kerak emas) ───────────────────
-      // Supabase dashboard'da yoqish:
-      //   Authentication → Sign In Methods → Anonymous → Enable
-      final response = await client.auth.signInAnonymously(
-        data: {'phone': phone}, // telefon raqamni metadata'ga saqlaymiz
-      );
+      // 2. Telefon raqamga bog'langan maxsus hisob orqali kirish
+      AuthResponse authResponse;
+      try {
+        authResponse = await client.auth.signInWithPassword(
+          email: fakeEmail,
+          password: fakePassword,
+        );
+      } catch (signInErr) {
+        // Agar hisob hali yaratilmagan bo'lsa → ro'yxatdan o'tkazish
+        authResponse = await client.auth.signUp(
+          email: fakeEmail,
+          password: fakePassword,
+          data: {'phone': formattedPhone},
+        );
+      }
 
-      final user = response.user;
-      if (user == null) throw Exception('Kirish amalga oshmadi');
+      final user = authResponse.user ?? client.auth.currentUser;
+      if (user == null) throw Exception('Tizimga kirish amalga oshmadi');
 
-      // Profil mavjudligini tekshirish
-      final profile = await client
+      // 3. Foydalanuvchi profili mavjudligini tekshirish
+      var profile = await client
           .from('profiles')
           .select()
           .eq('id', user.id)
           .maybeSingle();
 
-      return {'user_id': user.id, 'profile': profile};
-    } on AuthException catch (e) {
-      // Anonymous auth yoqilmagan bo'lsa → aniq xato ko'rsatamiz
-      if (e.message.toLowerCase().contains('anonymous') ||
-          e.message.toLowerCase().contains('disabled') ||
-          e.statusCode == '400' ||
-          e.statusCode == '422') {
-        throw Exception(
-          'Supabase sozlamalari:\n'
-          'Authentication → Sign In / Providers sahifasida\n'
-          '"Allow anonymous sign-ins" ni yoqing va Save bosing.',
-        );
+      if (profile == null) {
+        // Telefon raqam bo'yicha profilni tekshirish
+        profile = await client
+            .from('profiles')
+            .select()
+            .eq('phone', formattedPhone)
+            .maybeSingle();
       }
-      throw Exception(e.message);
+
+      return {'user_id': user.id, 'profile': profile};
     } catch (e) {
-      rethrow;
+      print('Login error: $e');
+      throw Exception('Kirishda xatolik yuz berdi: ${e.toString().replaceAll('Exception: ', '')}');
     }
-  }
-
-  // Email usul (anonymous auth yoqilmagan holat uchun fallback)
-  // ❗ Supabase → Authentication → Providers → Email → "Confirm email" ni o'chiring
-  Future<Map<String, dynamic>> _loginWithFakeEmail(String phone) async {
-    final cleanPhone = phone.replaceAll(RegExp(r'[^0-9]'), '');
-    final fakeEmail = 'u${cleanPhone}x@avtohelp.uz';
-    final fakePassword = 'av2h3lp_$cleanPhone';
-
-    AuthResponse authResponse;
-    try {
-      authResponse = await client.auth.signInWithPassword(
-        email: fakeEmail,
-        password: fakePassword,
-      );
-    } catch (_) {
-      authResponse = await client.auth.signUp(
-        email: fakeEmail,
-        password: fakePassword,
-        emailRedirectTo: null,
-      );
-    }
-
-    final user = authResponse.user;
-    if (user == null) throw Exception('Kirish amalga oshmadi');
-
-    final profile = await client
-        .from('profiles')
-        .select()
-        .eq('id', user.id)
-        .maybeSingle();
-
-    return {'user_id': user.id, 'profile': profile};
   }
 
   // ─────────────────────────────────────────────────────────────────────────
@@ -121,17 +98,16 @@ class SupabaseService {
       );
       return client.storage.from('avatars').getPublicUrl(fileName);
     } catch (e) {
-      // Rasm yuklash muvaffaqiyatsiz bo'lsa, skip qilamiz
       return null;
     }
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Xizmatlar ro'yxatini yuklash (admin panel orqali qo'shiladi)
+  // Xizmatlar ro'yxatini yuklash
   // ─────────────────────────────────────────────────────────────────────────
   Future<List<Map<String, dynamic>>> fetchServices() async {
     try {
-      final response = await client.from('services').select().order('name');
+      final response = await client.from('services').select().order('id');
       return List<Map<String, dynamic>>.from(response);
     } catch (e) {
       throw Exception('Xizmatlarni yuklashda xatolik: $e');
@@ -139,7 +115,7 @@ class SupabaseService {
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // Profil yaratish (user va master uchun)
+  // Profil yaratish / yangilash (user va master uchun)
   // ─────────────────────────────────────────────────────────────────────────
   Future<void> createProfile({
     required String userId,
@@ -149,34 +125,39 @@ class SupabaseService {
     String? photoUrl,
     List<int>? serviceIds, // Faqat MASTER uchun
   }) async {
-    // 1. Asosiy profil yaratish
-    await client.from('profiles').insert({
+    // 1. Asosiy profil upsert
+    await client.from('profiles').upsert({
       'id': userId,
       'phone': phone,
       'role': role,
       'full_name': fullName,
       'avatar_url': photoUrl,
-      'is_verified': role == 'USER', // User — avtomatik verified
-      'is_online': false,
+      'is_verified': role == 'USER',
+      'is_online': role == 'MASTER',
     });
 
     // 2. Usta qo'shimcha ma'lumotlari
     if (role == 'MASTER') {
-      // master_profiles trigger orqali avtomatik yaratiladi
-      await client.from('master_profiles').update({
-        'experience_years': 0,
-        'about': '',
-      }).eq('id', userId);
+      try {
+        await client.from('master_profiles').upsert({
+          'id': userId,
+          'experience_years': 2,
+          'about': 'Tezkor yordam ustasi',
+        });
+      } catch (_) {}
 
       // Tanlangan xizmatlarni qo'shish
       if (serviceIds != null && serviceIds.isNotEmpty) {
-        await client.from('master_services').insert(
-          serviceIds.map((id) => {
-            'master_id': userId,
-            'service_id': id,
-            'price': 0, // Narx keyinroq ustaning o'zi belgilaydi
-          }).toList(),
-        );
+        try {
+          await client.from('master_services').delete().eq('master_id', userId);
+          await client.from('master_services').insert(
+            serviceIds.map((id) => {
+              'master_id': userId,
+              'service_id': id,
+              'price': 0,
+            }).toList(),
+          );
+        } catch (_) {}
       }
     }
   }
@@ -187,14 +168,16 @@ class SupabaseService {
   Future<void> updateLocation(double lat, double lng) async {
     final userId = currentUserId;
     if (userId == null) return;
-    await client.from('profiles').update({
-      'location': 'POINT($lng $lat)',
-      'last_location_at': DateTime.now().toIso8601String(),
-    }).eq('id', userId);
+    try {
+      await client.from('profiles').update({
+        'location': 'POINT($lng $lat)',
+        'last_location_at': DateTime.now().toIso8601String(),
+      }).eq('id', userId);
+    } catch (_) {}
   }
 
   // ─────────────────────────────────────────────────────────────────────────
-  // 3km radiusda ustalarni qidirish (PostGIS RPC)
+  // 3km radiusda ustalarni qidirish
   // ─────────────────────────────────────────────────────────────────────────
   Future<List<dynamic>> searchNearbyMasters({
     required double latitude,

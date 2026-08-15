@@ -179,13 +179,49 @@ class _CreateOrderScreenState extends State<CreateOrderScreen> {
         'price': widget.basePrice,
       }).select().single();
 
-      // 3. Trigger FCM Push Notification
+      final orderId = response['id'];
+      final fullAddr = 'Qarshi | $timeRangeText' + (extraDetails.isNotEmpty ? ' | $extraDetails' : '');
+
+      // 3. Send Notification to Master(s)
+      try {
+        if (widget.masterProfile['master_id'] != null) {
+          // Direct to specific master
+          await _db.client.from('notifications').insert({
+            'user_id': widget.masterProfile['master_id'],
+            'title': '🚨 Yangi chaqiruv!',
+            'body': 'Yangi buyurtma: $fullAddr',
+            'data': {'order_id': orderId, 'service_id': widget.serviceId},
+            'is_read': false,
+          });
+        } else {
+          // Broadcast to all active masters
+          final masters = await _db.client
+              .from('profiles')
+              .select('id')
+              .eq('role', 'MASTER');
+          
+          if (masters.isNotEmpty) {
+            final notifs = masters.map((m) => {
+              'user_id': m['id'],
+              'title': '🚨 Yangi chaqiruv!',
+              'body': 'Avtohelp: Qarshida yangi buyurtma! $fullAddr',
+              'data': {'order_id': orderId, 'service_id': widget.serviceId},
+              'is_read': false,
+            }).toList();
+            await _db.client.from('notifications').insert(notifs);
+          }
+        }
+      } catch (err) {
+        print('Notification insert error: $err');
+      }
+
+      // 4. Trigger FCM Push Notification
       try {
         await _db.client.functions.invoke('send-push', body: {
           'user_id': widget.masterProfile['master_id'] ?? 'ALL_MASTERS',
           'title': 'Yangi yordam so\'rovi!',
-          'body': 'Avtohelp tizimida yangi buyurtma yaratildi.',
-          'data': {'order_id': response['id']}
+          'body': 'Avtohelp tizimida yangi buyurtma yaratildi: $fullAddr',
+          'data': {'order_id': orderId}
         });
       } catch (_) {}
 

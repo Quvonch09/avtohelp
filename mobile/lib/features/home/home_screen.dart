@@ -120,28 +120,47 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
 
     try {
       // 1. Get online status
-      final profileRes = await _db.client.from('profiles').select('is_online').eq('id', myId).single();
-      // 2. Get active order (not DONE/CANCELLED)
+      final profileRes = await _db.client.from('profiles').select('is_online').eq('id', myId).maybeSingle();
+      
+      // 2. Get active order (ACCEPTED, ON_WAY, ARRIVED)
       final activeOrderRes = await _db.client
           .from('orders')
-          .select('*, profiles_user:user_id(*), services(*), user_cars(*, car_brands(*), car_models(*))')
+          .select('*, services(*)')
           .eq('master_id', myId)
           .neq('status', 'DONE')
           .neq('status', 'CANCELLED')
+          .order('created_at', ascending: false)
+          .limit(1)
           .maybeSingle();
+
+      if (activeOrderRes != null && activeOrderRes['user_id'] != null) {
+        final u = await _db.client.from('profiles').select('full_name, phone').eq('id', activeOrderRes['user_id']).maybeSingle();
+        activeOrderRes['profiles_user'] = u;
+      }
 
       // 3. Get earnings & history
       final historyRes = await _db.client
           .from('orders')
           .select('*, services(*)')
           .eq('master_id', myId)
-          .eq('status', 'DONE');
+          .eq('status', 'DONE')
+          .order('created_at', ascending: false);
 
-      // 4. Fetch pending orders in Qarshi (for online view)
+      // 4. Fetch pending orders in Qarshi
       final pendingOrdersRes = await _db.client
           .from('orders')
-          .select('*, profiles_user:user_id(*), services(*)')
-          .eq('status', 'PENDING');
+          .select('*, services(*)')
+          .eq('status', 'PENDING')
+          .order('created_at', ascending: false);
+
+      if (pendingOrdersRes != null) {
+        for (var o in pendingOrdersRes) {
+          if (o['user_id'] != null) {
+            final u = await _db.client.from('profiles').select('full_name, phone').eq('id', o['user_id']).maybeSingle();
+            o['profiles_user'] = u;
+          }
+        }
+      }
 
       int earnings = 0;
       if (historyRes != null) {
@@ -151,7 +170,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
       }
 
       setState(() {
-        _isOnline = profileRes['is_online'] ?? false;
+        _isOnline = profileRes?['is_online'] ?? true;
         _activeMasterOrder = activeOrderRes;
         _masterHistory = historyRes ?? [];
         _masterEarnings = earnings;
@@ -170,16 +189,38 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     }
   }
 
-  // Real-time listener for orders (useful for both clients and masters)
+  // Real-time listener for orders and notifications
   void _subscribeToMasterOrders() {
+    final myId = widget.userProfile['id'];
     _db.client
-        .channel('public:orders')
+        .channel('public:orders_and_notifs')
         .onPostgresChanges(
             event: PostgresChangeEvent.all,
             schema: 'public',
             table: 'orders',
             callback: (payload) {
               _loadMasterData();
+            })
+        .onPostgresChanges(
+            event: PostgresChangeEvent.all,
+            schema: 'public',
+            table: 'notifications',
+            filter: PostgresChangeFilter(
+              type: PostgresChangeFilterType.eq,
+              column: 'user_id',
+              value: myId,
+            ),
+            callback: (payload) {
+              _loadMasterData();
+              if (mounted && payload.newRecord['title'] != null) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(
+                    content: Text('🔔 ${payload.newRecord['title']}\n${payload.newRecord['body']}'),
+                    backgroundColor: const Color(0xFF132F4C),
+                    duration: const Duration(seconds: 4),
+                  ),
+                );
+              }
             })
         .subscribe();
   }
@@ -204,63 +245,7 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
     }
   }
 
-  // Status updates flow for master: ACCEPTED -> ON_WAY -> ARRIVED -> DONE
-  Future<void> _updateOrderStatus(String orderId, String newStatus) async {
-    try {
-      await _db.client.from('orders').update({'status': newStatus}).eq('id', orderId);
-      
-      // Trigger push notification to Client
-      final orderData = _activeMasterOrder;
-      if (orderData != null) {
-        String title = "Buyurtma holati yangilandi";
-        String body = "";
-        if (newStatus == 'ON_WAY') body = "Usta yo'lga chiqdi!";
-        if (newStatus == 'ARRIVED') body = "Usta yetib keldi va ish boshladi!";
-        if (newStatus == 'DONE') body = "Ish yakunlandi! Iltimos, xizmatni baholang.";
 
-        await _db.client.functions.invoke('send-push', body: {
-          'user_id': orderData['user_id'],
-          'title': title,
-          'body': body,
-          'data': {'order_id': orderId, 'status': newStatus}
-        });
-      }
-
-      _loadMasterData();
-    } catch (e) {
-      print('Error updating order status: $e');
-    }
-  }
-
-  // Accept a new order
-  Future<void> _acceptOrder(String orderId) async {
-    final myId = widget.userProfile['id'];
-    try {
-      await _db.client.from('orders').update({
-        'status': 'ACCEPTED',
-        'master_id': myId,
-      }).eq('id', orderId);
-
-      // Notify user
-      await _db.client.functions.invoke('send-push', body: {
-        'user_id': _newOrders.firstWhere((o) => o['id'] == orderId)['user_id'],
-        'title': 'Buyurtma qabul qilindi!',
-        'body': 'Usta buyurtmangizni qabul qildi va tez orada bog\'lanadi.',
-        'data': {'order_id': orderId}
-      });
-
-      _loadMasterData();
-    } catch (e) {
-      print('Error accepting order: $e');
-    }
-  }
-
-  // Reject an order (locally filter it out for simplicity)
-  void _rejectOrder(String orderId) {
-    setState(() {
-      _newOrders.removeWhere((o) => o['id'] == orderId);
-    });
-  }
 
   // Google Maps Picker sheet for User
   void _openLocationPicker() {
@@ -1295,6 +1280,104 @@ class _HomeScreenState extends State<HomeScreen> with SingleTickerProviderStateM
         ],
       ),
     );
+  }
+
+  // ─── USTA BUYURTMA AMALLARI ─────────────────────────────────
+  Future<void> _acceptOrder(String orderId) async {
+    final myId = widget.userProfile['id'];
+    try {
+      await _db.client.from('orders').update({
+        'master_id': myId,
+        'status': 'ACCEPTED',
+      }).eq('id', orderId);
+
+      // Notify customer
+      final order = await _db.client.from('orders').select('user_id').eq('id', orderId).maybeSingle();
+      if (order != null && order['user_id'] != null) {
+        await _db.client.from('notifications').insert({
+          'user_id': order['user_id'],
+          'title': '✅ Usta buyurtmani qabul qildi!',
+          'body': '${widget.userProfile['full_name'] ?? 'Usta'} buyurtmangizni qabul qildi va yo\'lga chiqishga tayyorlanmoqda.',
+          'data': {'order_id': orderId, 'status': 'ACCEPTED'},
+        });
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('✅ Buyurtma muvaffaqiyatli qabul qilindi!')),
+        );
+      }
+      _loadMasterData();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Xatolik: $e')),
+        );
+      }
+    }
+  }
+
+  void _rejectOrder(String orderId) {
+    setState(() {
+      _newOrders.removeWhere((o) => o['id'] == orderId);
+    });
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Buyurtma rad etildi')),
+      );
+    }
+  }
+
+  Future<void> _updateOrderStatus(String orderId, String nextStatus) async {
+    final myId = widget.userProfile['id'];
+    try {
+      await _db.client.from('orders').update({
+        'status': nextStatus,
+      }).eq('id', orderId);
+
+      final order = await _db.client.from('orders').select('user_id').eq('id', orderId).maybeSingle();
+      if (order != null && order['user_id'] != null) {
+        String title = 'Buyurtma holati yangilandi';
+        String body = 'Holat: $nextStatus';
+        if (nextStatus == 'ON_WAY') {
+          title = '🚗 Usta yo\'lga chiqdi!';
+          body = 'Usta siz ko\'rsatgan manzilga qarab yo\'l oldi.';
+        } else if (nextStatus == 'ARRIVED') {
+          title = '📍 Usta yetib keldi!';
+          body = 'Usta belgilangan manzilga yetib keldi va ishni boshladi.';
+        } else if (nextStatus == 'DONE') {
+          title = '🎉 Xizmat yakunlandi!';
+          body = 'Buyurtma muvaffaqiyatli bajarildi. Iltimos, ustani baholang.';
+        }
+        await _db.client.from('notifications').insert({
+          'user_id': order['user_id'],
+          'title': title,
+          'body': body,
+          'data': {'order_id': orderId, 'status': nextStatus},
+        });
+      }
+
+      if (nextStatus == 'DONE') {
+        try {
+          final mp = await _db.client.from('master_profiles').select('completed_orders').eq('id', myId).maybeSingle();
+          final count = (mp?['completed_orders'] as int? ?? 0) + 1;
+          await _db.client.from('master_profiles').update({'completed_orders': count}).eq('id', myId);
+        } catch (_) {}
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Holat yangilandi: $nextStatus')),
+        );
+      }
+      _loadMasterData();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Xatolik: $e')),
+        );
+      }
+    }
   }
 }
 
