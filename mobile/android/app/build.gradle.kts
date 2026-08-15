@@ -1,7 +1,15 @@
+import java.util.Properties
+import java.io.FileInputStream
+
 plugins {
     id("com.android.application")
-    // The Flutter Gradle Plugin must be applied after the Android and Kotlin Gradle plugins.
     id("dev.flutter.flutter-gradle-plugin")
+}
+
+val keyPropertiesFile = rootProject.file("key.properties")
+val keyProperties = Properties()
+if (keyPropertiesFile.exists()) {
+    keyProperties.load(FileInputStream(keyPropertiesFile))
 }
 
 android {
@@ -15,10 +23,7 @@ android {
     }
 
     defaultConfig {
-        // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
         applicationId = "uz.avtohelp.master_help"
-        // You can update the following values to match your application needs.
-        // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
         targetSdk = flutter.targetSdkVersion
         versionCode = flutter.versionCode
@@ -27,10 +32,40 @@ android {
         manifestPlaceholders["googleMapsApiKey"] = (project.findProperty("GOOGLE_MAPS_API_KEY") ?: System.getenv("GOOGLE_MAPS_API_KEY") ?: "") as String
     }
 
+    signingConfigs {
+        create("release") {
+            val keystoreInApp = file("avtohelp-release.jks")
+            if (keyPropertiesFile.exists()) {
+                keyAlias = keyProperties.getProperty("keyAlias") ?: "avtohelp"
+                keyPassword = keyProperties.getProperty("keyPassword") ?: "avtohelp2024"
+                storePassword = keyProperties.getProperty("storePassword") ?: "avtohelp2024"
+                val propStore = keyProperties.getProperty("storeFile") ?: "avtohelp-release.jks"
+                storeFile = if (file(propStore).exists()) {
+                    file(propStore)
+                } else if (rootProject.file("app/$propStore").exists()) {
+                    rootProject.file("app/$propStore")
+                } else {
+                    file("avtohelp-release.jks")
+                }
+            } else if (keystoreInApp.exists()) {
+                keyAlias = "avtohelp"
+                keyPassword = "avtohelp2024"
+                storePassword = "avtohelp2024"
+                storeFile = keystoreInApp
+            }
+        }
+    }
+
     buildTypes {
         release {
-            // TODO: Add your own signing config for the release build.
-            // Signing with the debug keys for now, so `flutter run --release` works.
+            val releaseSigning = signingConfigs.findByName("release")
+            if (releaseSigning != null && releaseSigning.storeFile != null && releaseSigning.storeFile!!.exists()) {
+                signingConfig = releaseSigning
+            } else {
+                signingConfig = signingConfigs.getByName("debug")
+            }
+        }
+        debug {
             signingConfig = signingConfigs.getByName("debug")
         }
     }
